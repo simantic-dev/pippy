@@ -8,14 +8,19 @@ One package covers both, because co-simulation puts them together: an
 
 ```bash
 pip install simantic
-simantic auth              # store your token in ~/.sim_id
 simantic install           # fetch the simulator binaries
+simantic auth              # only needed to resolve MCU models by name
 ```
 
-`simantic auth` writes the same `~/.sim_id` the CLIs use, so one login covers
-all of them. `simantic install` downloads the published binaries into
-`~/.simantic/bin`, verifying each against the checksum in the release
-manifest, and the SDK finds them there with no further configuration.
+`simantic install` downloads the published binaries into `~/.simantic/bin`,
+verifying each against the checksum in the release manifest, and the SDK
+finds them there with no further configuration. Releases are public, so this
+needs no account.
+
+`simantic auth` stores a personal access token in `~/.sim_id` — the same file
+the CLIs use, so one login covers all of them. It is what lets you name an
+MCU model (`mcu="STM32F401RE"`) and have it resolved for you; simulating
+against a platform file you supply needs no account at all.
 
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
