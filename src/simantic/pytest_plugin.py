@@ -6,7 +6,7 @@ whole suite. That buys `-k` filtering, per-test durations, `--junitxml` rows,
 and xdist parallelism without any per-project glue.
 
 - `*.sim.toml`  — one item per `[[test]]` table (analog-cli)
-- `test.yaml`   — one item per fixture (pyrite sim)
+- `test.yaml`   — one item per fixture (sim)
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ class AnalogTestItem(_ReportingItem):
         return self.path, 0, f"analog test: {self.name}"
 
 
-# --- pyrite sim: test.yaml -------------------------------------------------
+# --- sim: test.yaml -------------------------------------------------
 
 
 class FixtureYamlFile(pytest.File):
@@ -101,13 +101,12 @@ class FixtureYamlFile(pytest.File):
 
 
 class FirmwareItem(_ReportingItem):
-    """One sim-fixtures manifest: boot the ELF, check the UART transcript.
+    """One fixture manifest: boot the ELF, check the UART transcript.
 
-    The platform comes from the server by model name — the product path,
-    which needs `sim auth`. A local mcu-lib checkout ($SIMANTIC_MCU_LIB)
-    overrides that and resolves offline, which is also what a fixture's
-    `overlay` fragment requires, since an overlay edits platform text the
-    server would otherwise never hand out.
+    The platform is resolved by model name, which needs `sim auth`. A local
+    model library ($SIMANTIC_MCU_LIB) overrides that and resolves without a
+    round trip, which is also what a fixture's `overlay` fragment requires,
+    since an overlay edits platform text before the simulator sees it.
     """
 
     def runtest(self) -> None:
@@ -120,7 +119,7 @@ class FirmwareItem(_ReportingItem):
         if manifest.overlay and not local_models:
             pytest.skip(
                 f"fixture applies an overlay fragment, which needs a local model: "
-                f"set ${MCU_LIB_ENV} to an mcu-lib checkout"
+                f"set ${MCU_LIB_ENV} to a local model library"
             )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +168,7 @@ def analog():
 
 @pytest.fixture
 def firmware():
-    """The pyrite sim runner, skipping when no binary is installed.
+    """The sim runner, skipping when no binary is installed.
 
         def test_boot(firmware):
             run = firmware("fw.elf", repl="board.repl", expect=["RESULT: PASS"])

@@ -1,22 +1,18 @@
-"""Driving the pyrite `sim` binary — firmware simulation.
+"""Driving the `sim` binary — firmware simulation.
 
-Two sim builds exist and this module drives either. simantic-cli's is
-self-contained and hosts its own engine. Pyrite's `crates/sim` is a thin
-client to a separate `sim-server`, and says so on stderr when no server is
-configured — which is where ServerNotConfigured comes from, rather than from
-this module assuming one shape.
+Platforms come from one of two places. `mcu=` names a model, which `sim`
+resolves for you and which requires authentication (`sim auth`); models are
+not distributed with this package. `repl=` points at a platform file you
+supply yourself.
 
-Platforms come from one of two places. `mcu=` names a model the server
-resolves for you, which is the product path and requires authentication
-(`sim auth`, credentials in ~/.sim_id) — models are not shipped with this
-package. `repl=` points at a local platform file, which is the path for
-platforms you author yourself.
+`sim` emits no structured report: the only observable is UART text, written
+to --output. The verdict therefore comes from substring matching, which is
+the contract `test.yaml` manifests use (`expect` / `expect_absent`) and the
+reason test firmware conventionally prints a `RESULT: PASS` marker.
 
-Unlike analog-cli, `sim` emits no structured report: the only observable is
-UART text, written to --output. The verdict therefore comes from substring
-matching, which is the same contract sim-fixtures' test.yaml manifests use
-(`expect` / `expect_absent`) and the reason fixture firmware prints a
-`RESULT: PASS` marker.
+Some installations require a separate simulation server. This module does
+not assume either way — it reads that from what the binary reports, so the
+same code drives both.
 """
 
 from __future__ import annotations
@@ -33,9 +29,8 @@ from ._locate import locate
 ENV_VAR = "SIMANTIC_SIM"
 BINARY = "sim"
 
-#: `--backend rust` selects the pure-Rust rn-cpu core (Cortex-M only). The
-#: default tlib backend needs the LGPL translate-*.so libraries beside the
-#: binary; a build shipped without them can only run this backend.
+#: Values accepted by `sim --backend`. Which are available, and which targets
+#: each supports, depends on the installed build — see its --help.
 BACKENDS = ("tlib", "rust")
 
 
@@ -44,15 +39,11 @@ class SimError(RuntimeError):
 
 
 class ServerNotConfigured(SimError):
-    """The binary is a client and no sim-server was given.
+    """This installation needs a simulation server and none was given.
 
     Separate from SimError because it is an unconfigured environment, not a
     simulation result: a test runner should skip on it, the way it skips on
     a missing binary, rather than report a firmware failure.
-
-    Detected from the binary's own complaint rather than pre-checked, because
-    whether a server is needed is a property of the build in front of us: a
-    self-contained sim hosts its engine, a client build does not.
     """
 
 
@@ -84,7 +75,7 @@ class SimRun:
 
 
 def sim_binary(explicit: str | os.PathLike[str] | None = None) -> Path:
-    """Resolve the pyrite sim binary, or raise BinaryNotFound."""
+    """Resolve the sim binary, or raise BinaryNotFound."""
     return locate(BINARY, ENV_VAR, explicit)
 
 
@@ -152,10 +143,11 @@ def run(
 
     if proc.returncode != 0 and not output:
         stderr = proc.stderr.strip()
+        # Matched against what sim reports rather than pre-checked: whether a
+        # server is needed depends on the installation, not on this package.
         if "sim-server" in stderr:
             raise ServerNotConfigured(
-                f"{stderr}\nThis sim build is a client and hosts no engine: "
-                "start a sim-server and pass server= or set $SIM_SERVER_URL."
+                f"{stderr}\nPass server= or set $SIM_SERVER_URL."
             )
         raise SimError(f"sim exited {proc.returncode} with no output\n{stderr}")
 

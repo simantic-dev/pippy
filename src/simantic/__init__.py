@@ -1,7 +1,7 @@
 """Python SDK for the Simantic simulators.
 
 One package covers both engines, because co-simulation puts them together:
-`analog-cli` for circuits and pyrite's `sim` for firmware.
+`analog-cli` for circuits and `sim` for firmware.
 
     import simantic
 
@@ -13,8 +13,8 @@ Neither binary is bundled. Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH.
 
 Installing this package also registers a pytest plugin that turns the
-manifests a project already keeps — `*.sim.toml` testplans and sim-fixtures
-`test.yaml` files — into individually addressable pytest items.
+manifests a project already keeps — `*.sim.toml` testplans and `test.yaml`
+fixture manifests — into individually addressable pytest items.
 """
 
 from ._locate import BinaryNotFound, analog_cli

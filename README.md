@@ -40,9 +40,9 @@ startup-settling (tran): fail
 ```
 
 Tests that cannot run in the current environment skip rather than fail — a
-missing binary, an unconfigured server, an analysis awaiting an engine
-milestone, a check inapplicable to the project. A red run means a simulation
-ran and disagreed with its expectations.
+missing binary, an unconfigured server, an analysis the installed CLI does
+not support, a check inapplicable to the project. A red run means a
+simulation ran and disagreed with its expectations.
 
 ## Library
 
@@ -79,14 +79,14 @@ assert run.passed, run.failure_report()
 verdict is substring matching, the same contract `test.yaml` manifests use.
 Pass `repl=` instead of `mcu=` for a platform file you author yourself.
 
-MCU models are not shipped with this package: `mcu=` resolves them through
-the authenticated backend. Developers with an mcu-lib checkout can set
-`$SIMANTIC_MCU_LIB` to resolve offline instead, which is also what applying a
-fixture's `overlay` fragment requires.
+MCU models are not distributed with this package: `mcu=` resolves them
+through your account. If you have a local model library, set
+`$SIMANTIC_MCU_LIB` to resolve from it instead — which is also what applying
+a fixture's `overlay` fragment requires.
 
-Some `sim` builds are clients to a separate `sim-server` and host no engine
-themselves. When one is, the SDK raises `ServerNotConfigured` (and the pytest
-plugin skips) rather than reporting a firmware failure.
+Some installations need a separate simulation server. When one does, the SDK
+raises `ServerNotConfigured` and the pytest plugin skips, rather than
+reporting a firmware failure.
 
 ## Compatibility
 

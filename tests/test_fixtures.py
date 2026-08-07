@@ -119,12 +119,8 @@ def test_run_refuses_an_unknown_backend():
         run_firmware("a.elf", repl="b.repl", backend="qemu")
 
 
-def test_client_build_without_a_server_is_distinguished(tmp_path):
-    """A client sim's own complaint must not read as a firmware failure.
-
-    Whether a server is needed depends on the build, so this is detected from
-    stderr rather than pre-checked — a self-contained sim never says it.
-    """
+def test_missing_server_is_distinguished_from_a_firmware_failure(tmp_path):
+    """Detected from what sim reports, since not every installation needs one."""
     fake = tmp_path / "sim"
     fake.write_text(
         "#!/bin/sh\n"
@@ -132,7 +128,7 @@ def test_client_build_without_a_server_is_distinguished(tmp_path):
         "exit 2\n"
     )
     fake.chmod(0o755)
-    with pytest.raises(ServerNotConfigured, match="hosts no engine"):
+    with pytest.raises(ServerNotConfigured, match="SIM_SERVER_URL"):
         run_firmware("a.elf", repl="b.repl", binary=fake)
 
 

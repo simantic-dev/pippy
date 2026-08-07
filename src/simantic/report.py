@@ -12,8 +12,9 @@ from typing import Any
 
 SCHEMA = "analog-cli.test-report/1"
 
-#: Statuses that do not fail a run. `not_implemented` marks a test whose kind
-#: awaits an engine milestone; `skipped` a test inapplicable to the project.
+#: Statuses that do not fail a run. `not_implemented` marks a test kind the
+#: installed CLI does not support; `skipped` one inapplicable to the project.
+#: Neither is an error: a testplan may name more than the CLI can run today.
 PASSING_STATUSES = frozenset({"pass", "skipped", "not_implemented"})
 
 

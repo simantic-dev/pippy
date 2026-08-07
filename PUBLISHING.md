@@ -89,10 +89,10 @@ breaking changes can still happen, which is honest for a first release.
 ## Notes for later
 
 - **Binary wheels.** The SDK deliberately does not bundle a simulator; it
-  resolves `analog-cli` from `$SIMANTIC_ANALOG_CLI`, then a `_bin/` directory
-  inside the package, then PATH. A future platform-specific
-  `simantic-pyrite` wheel can drop a binary into `_bin/` and be found with no
-  SDK change.
+  resolves each binary from its `$SIMANTIC_*` variable, then a `_bin/`
+  directory inside the package, then PATH. A separate platform-specific wheel
+  can therefore drop a binary into `_bin/` and be found with no SDK change,
+  which is the seam to use if engines are ever distributed through PyPI.
 - **Closed-source binaries are fine on PyPI.** Wheels need not contain
   source, and the index has no open-source requirement. Keeping this SDK MIT
   while the engines stay proprietary is a normal arrangement.
