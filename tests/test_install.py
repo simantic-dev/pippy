@@ -75,6 +75,45 @@ def test_a_rejected_token_says_to_authenticate(code, monkeypatch):
         install.fetch_manifest("sim")
 
 
+# --- release channels ---
+
+
+def test_latest_is_the_default_channel(monkeypatch):
+    assert _requested_url(monkeypatch, {}) .endswith("/cli/latest.json")
+
+
+def test_channel_argument_selects_the_manifest(monkeypatch):
+    url = _requested_url(monkeypatch, {}, channel="testing")
+    assert url.endswith("/cli/testing.json")
+
+
+def test_environment_selects_the_channel(monkeypatch):
+    """So a tester can opt in once instead of on every command."""
+    assert _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}).endswith(
+        "/cli/testing.json"
+    )
+
+
+def test_explicit_channel_beats_the_environment(monkeypatch):
+    url = _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}, channel="latest")
+    assert url.endswith("/cli/latest.json")
+
+
+def _requested_url(monkeypatch, env, **kwargs) -> str:
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    seen = []
+
+    def capture(request, **k):
+        seen.append(request.full_url)
+        raise install.urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
+    with pytest.raises(install.InstallError):
+        install.fetch_manifest("sim", **kwargs)
+    return seen[0]
+
+
 # --- platform mapping ---
 
 

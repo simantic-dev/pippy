@@ -3,9 +3,13 @@
 Reads the same release manifest the CLIs self-update from, so a binary
 installed here is the same artifact `sim update` would have produced:
 
-    releases/<product>/latest.json
+    releases/<product>/<channel>.json
     {"version": "0.4.0",
      "artifacts": {"osx-arm64": {"url": ..., "sha256": ...}, ...}}
+
+The channel is just the manifest name, so publishing a pre-release means
+uploading a second pointer beside latest.json rather than standing up
+anything new.
 
 Binaries land in ~/.simantic/bin, which the resolver searches. Nothing is
 written into site-packages: an installed package may be read-only, and a
@@ -39,6 +43,13 @@ PRODUCTS = {
     "sim": "cli",
     "analog-cli": "analog",
 }
+
+#: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.
+DEFAULT_CHANNEL = "latest"
+
+
+def default_channel() -> str:
+    return os.environ.get("SIMANTIC_CHANNEL") or DEFAULT_CHANNEL
 
 
 class InstallError(RuntimeError):
@@ -98,13 +109,15 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.load().api_key}"}
 
 
-def fetch_manifest(binary: str, *, timeout: float = 30) -> dict:
+def fetch_manifest(
+    binary: str, *, channel: str | None = None, timeout: float = 30
+) -> dict:
     product = PRODUCTS.get(binary)
     if product is None:
         raise InstallError(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
-    url = f"{RELEASES_URL}/{product}/latest.json"
+    url = f"{RELEASES_URL}/{product}/{channel or default_channel()}.json"
     request = urllib.request.Request(url, headers=_headers())
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -125,9 +138,11 @@ def fetch_manifest(binary: str, *, timeout: float = 30) -> dict:
         raise InstallError(f"release manifest is not valid JSON: {exc}") from None
 
 
-def resolve(binary: str, *, rid: str | None = None) -> Artifact:
+def resolve(
+    binary: str, *, rid: str | None = None, channel: str | None = None
+) -> Artifact:
     """The artifact this machine should download."""
-    manifest = fetch_manifest(binary)
+    manifest = fetch_manifest(binary, channel=channel)
     version = manifest.get("version")
     artifacts = manifest.get("artifacts")
     if not version or not isinstance(artifacts, dict):
@@ -188,13 +203,13 @@ def _extract(payload: bytes, binary: str) -> bytes:
         )
 
 
-def install(binary: str, *, force: bool = False) -> Path:
+def install(binary: str, *, force: bool = False, channel: str | None = None) -> Path:
     """Download `binary` into the managed bin directory; return its path."""
     target = bin_dir() / binary
     if target.exists() and not force:
         return target
 
-    artifact = resolve(binary)
+    artifact = resolve(binary, channel=channel)
     executable = _extract(download(artifact), binary)
 
     target.parent.mkdir(parents=True, exist_ok=True)

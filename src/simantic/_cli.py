@@ -41,7 +41,7 @@ def _install(args) -> int:
     failures = 0
     for name in names:
         try:
-            path = install.install(name, force=args.force)
+            path = install.install(name, force=args.force, channel=args.channel)
             print(f"{name}: {path}")
         except install.InstallError as exc:
             print(f"{name}: {exc}", file=sys.stderr)
@@ -87,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     p_install.add_argument("binary", nargs="*", help="defaults to all known binaries")
     p_install.add_argument(
         "--force", action="store_true", help="re-download even if already present"
+    )
+    p_install.add_argument(
+        "--channel",
+        help="release channel to install from (default: latest, or $SIMANTIC_CHANNEL)",
     )
     p_install.set_defaults(func=_install)
 
