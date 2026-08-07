@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simantic"
+version = "0.1.0"
+description = "Python SDK and pytest plugin for the Simantic circuit and firmware simulators"
+# PyYAML reads sim-fixtures test.yaml manifests. Everything else is stdlib
+# (tomllib, json, subprocess), so this is the package's only dependency.
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Simantic" }]
+keywords = ["spice", "simulation", "eda", "kicad", "pytest", "firmware", "circuit"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+dependencies = ["pyyaml>=6"]
+
+[project.urls]
+Homepage = "https://simantic.dev"
+Source = "https://github.com/simantic-dev/simantic-py"
+Issues = "https://github.com/simantic-dev/simantic-py/issues"
+
+[project.entry-points.pytest11]
+simantic = "simantic.pytest_plugin"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/simantic"]

@@ -1,0 +1,65 @@
+# Tests every push and PR, and publishes to PyPI when a v* tag is pushed.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC): the `pypi` environment
+# exchanges this workflow's identity for a short-lived upload token, so there
+# is no API token in repository secrets to leak or rotate. It must be
+# configured once on PyPI before the first tagged release — see PUBLISHING.md.
+#
+# The SDK is pure Python and its tests need no simulator binary: the report
+# fixtures are literal JSON in the shapes the schema allows, so CI stays
+# independent of the engines this package drives.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 3.11 is the floor (tomllib landed there); 3.13 guards the top end.
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --python ${{ matrix.python }} --with pytest --with . pytest tests/ -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      # Catches the metadata problems PyPI rejects on upload — a malformed
+      # README, a bad classifier — while the tag can still be redone.
+      - run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for trusted publishing; nothing else is
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
