@@ -1,10 +1,17 @@
 """Finding the simulator binaries.
 
 The SDK never bundles a binary: it drives whichever one the caller points at.
-Resolution order is explicit argument, then the binary's environment
-variable, then a `_bin/` directory inside this package, then PATH. The
-`_bin/` step is what lets a future platform-specific wheel ship a binary and
-be found with no change here.
+Resolution order, most explicit first:
+
+1. an explicit argument
+2. the binary's environment variable
+3. ~/.simantic/bin, where `simantic install` puts things
+4. a `_bin/` directory inside this package
+5. PATH
+
+A deliberate `simantic install` outranks a bundled `_bin/` copy, so fetching
+a newer binary actually takes effect. The `_bin/` step is what would let a
+platform-specific wheel ship a binary and be found with no change here.
 """
 
 import os
@@ -35,6 +42,17 @@ def locate(
             raise BinaryNotFound(f"${env_var} points at {path}, which does not exist")
         return path
 
+    # Imported here: install imports nothing from this module, but keeping the
+    # dependency one-way makes that impossible to get wrong later.
+    from .install import bin_dir
+
+    try:
+        managed = bin_dir() / binary
+    except Exception:  # no HOME and no $SIMANTIC_HOME — just skip this step
+        managed = None
+    if managed is not None and managed.exists():
+        return managed
+
     bundled = Path(__file__).parent / "_bin" / binary
     if bundled.exists():
         return bundled
@@ -44,7 +62,8 @@ def locate(
         return Path(found)
 
     raise BinaryNotFound(
-        f"no {binary!r} binary found. Put it on PATH, or set ${env_var} to its location."
+        f"no {binary!r} binary found. Run `simantic install {binary}`, put it on "
+        f"PATH, or set ${env_var} to its location."
     )
 
 

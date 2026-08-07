@@ -8,10 +8,19 @@ One package covers both, because co-simulation puts them together: an
 
 ```bash
 pip install simantic
+simantic auth              # store your token in ~/.sim_id
+simantic install           # fetch the simulator binaries
 ```
 
-The SDK does not bundle a simulator. Point `$SIMANTIC_ANALOG_CLI` and
-`$SIMANTIC_SIM` at the binaries, or put them on PATH.
+`simantic auth` writes the same `~/.sim_id` the CLIs use, so one login covers
+all of them. `simantic install` downloads the published binaries into
+`~/.simantic/bin`, verifying each against the checksum in the release
+manifest, and the SDK finds them there with no further configuration.
+
+Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
+at them, or put them on PATH — both take precedence over a managed install.
+`simantic status` shows what is authenticated and which binary each name
+resolves to.
 
 ## pytest plugin
 

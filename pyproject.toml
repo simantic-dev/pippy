@@ -32,6 +32,9 @@ Issues = "https://github.com/simantic-dev/simantic-py/issues"
 [project.entry-points.pytest11]
 simantic = "simantic.pytest_plugin"
 
+[project.scripts]
+simantic = "simantic._cli:main"
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
