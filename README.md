@@ -6,21 +6,30 @@ simulators — circuits via `analog-cli`, firmware via `sim`.
 One package covers both, because co-simulation puts them together: an
 `analog-cli` testplan can already declare a `firmware` test with an `elf`.
 
+> **Alpha — not stable.** Version 0.1.x. The API, the CLI surface, and the
+> report schema may change without a deprecation period, and any release may
+> break the previous one. Pin an exact version (`simantic==0.1.0`) if you
+> depend on it. Not recommended for production pipelines yet.
+
+> **A Simantic account is required.** Installing the package gets you the
+> Python code, but the simulators it drives are fetched from our backend and
+> every request is authenticated. Without `simantic auth`, nothing runs.
+
 ```bash
 pip install simantic
+simantic auth              # required: authenticates against your account
 simantic install           # fetch the simulator binaries
-simantic auth              # only needed to resolve MCU models by name
 ```
 
-`simantic install` downloads the published binaries into `~/.simantic/bin`,
-verifying each against the checksum in the release manifest, and the SDK
-finds them there with no further configuration. Releases are public, so this
-needs no account.
-
 `simantic auth` stores a personal access token in `~/.sim_id` — the same file
-the CLIs use, so one login covers all of them. It is what lets you name an
-MCU model (`mcu="STM32F401RE"`) and have it resolved for you; simulating
-against a platform file you supply needs no account at all.
+the CLIs use, so one login covers all of them. Create a token on the
+dashboard's `/account/api` page.
+
+`simantic install` then downloads the binaries into `~/.simantic/bin`,
+verifying each against the checksum in the release manifest, and the SDK
+finds them there with no further configuration. It fails closed: with no
+stored credentials it stops before any download and tells you to
+authenticate.
 
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
@@ -82,7 +91,7 @@ run at all — bad project, missing `kicad-cli`, invalid testplan — raise
 ```python
 run = simantic.run_firmware(
     "build/zephyr.elf",
-    mcu="STM32F401RE",              # resolved by the backend; needs `sim auth`
+    mcu="STM32F401RE",          # resolved by the backend through your account
     expect=["RESULT: PASS"],
     expect_absent=["RESULT: FAIL"],
 )

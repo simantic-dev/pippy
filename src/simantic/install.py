@@ -10,6 +10,9 @@ installed here is the same artifact `sim update` would have produced:
 Binaries land in ~/.simantic/bin, which the resolver searches. Nothing is
 written into site-packages: an installed package may be read-only, and a
 binary there would vanish on the next upgrade.
+
+Fetching requires an account: every request carries the stored token, and
+an unauthenticated install stops before it reaches the network.
 """
 
 from __future__ import annotations
@@ -25,6 +28,8 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import auth
 
 RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases"
 
@@ -83,6 +88,16 @@ def current_rid() -> str:
     return f"{system}-{arch}"
 
 
+def _headers() -> dict[str, str]:
+    """Authorization for a release request.
+
+    Raises NotAuthenticated rather than falling back to an anonymous fetch:
+    an install must fail closed, and failing here costs nothing but a clear
+    message before any network round trip.
+    """
+    return {"Authorization": f"Bearer {auth.load().api_key}"}
+
+
 def fetch_manifest(binary: str, *, timeout: float = 30) -> dict:
     product = PRODUCTS.get(binary)
     if product is None:
@@ -90,10 +105,16 @@ def fetch_manifest(binary: str, *, timeout: float = 30) -> dict:
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     url = f"{RELEASES_URL}/{product}/latest.json"
+    request = urllib.request.Request(url, headers=_headers())
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise auth.NotAuthenticated(
+                f"the backend rejected your credentials for {binary!r} "
+                "(HTTP {}) — run `simantic auth`".format(exc.code)
+            ) from None
         raise InstallError(
             f"no published releases for {binary!r} (HTTP {exc.code} from {url}). "
             "Install the binary yourself and point $SIMANTIC_* at it."
@@ -124,9 +145,17 @@ def resolve(binary: str, *, rid: str | None = None) -> Artifact:
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
+    request = urllib.request.Request(artifact.url, headers=_headers())
     try:
-        with urllib.request.urlopen(artifact.url, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise auth.NotAuthenticated(
+                f"the backend rejected your credentials (HTTP {exc.code}) — "
+                "run `simantic auth`"
+            ) from None
+        raise InstallError(f"download failed: HTTP {exc.code}") from None
     except urllib.error.URLError as exc:
         raise InstallError(f"download failed: {exc.reason}") from None
 

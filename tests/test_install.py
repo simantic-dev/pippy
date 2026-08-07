@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from simantic import install
+from simantic import auth, install
 from simantic._locate import BinaryNotFound, locate
 
 MANIFEST = {
@@ -23,6 +23,8 @@ MANIFEST = {
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
+    # Fetching requires an account, so the common case here is authenticated.
+    auth.save("smtc_" + "a" * 32, "dev@example.com")
     return tmp_path
 
 
@@ -31,6 +33,46 @@ def zipped(name: str, body: bytes) -> bytes:
     with zipfile.ZipFile(buf, "w") as archive:
         archive.writestr(name, body)
     return buf.getvalue()
+
+
+# --- the account gate ---
+
+
+def test_fetching_without_an_account_is_refused(home, monkeypatch):
+    """Fails closed, and before any network call — no anonymous fallback."""
+    (home / ".sim_id").unlink()
+
+    def explode(*a, **k):
+        raise AssertionError("must not reach the network unauthenticated")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", explode)
+    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
+        install.install("sim")
+
+
+def test_the_token_is_sent_with_every_release_request(monkeypatch):
+    seen = []
+
+    def capture(request, **k):
+        seen.append(request.get_header("Authorization"))
+        raise install.urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
+    with pytest.raises(install.InstallError):
+        install.fetch_manifest("sim")
+    with pytest.raises(install.InstallError):
+        install.download(install.Artifact("0.4.0", "https://example.invalid/x", None))
+    assert seen == ["Bearer smtc_" + "a" * 32] * 2
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_a_rejected_token_says_to_authenticate(code, monkeypatch):
+    def refuse(*a, **k):
+        raise install.urllib.error.HTTPError("u", code, "no", {}, None)
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", refuse)
+    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
+        install.fetch_manifest("sim")
 
 
 # --- platform mapping ---
@@ -110,7 +152,8 @@ def test_matching_checksum_is_accepted(monkeypatch):
 def test_manifest_without_a_checksum_still_installs(monkeypatch):
     """Not every published artifact carries one; absence must not block."""
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(b"x"))
-    assert install.download(install.Artifact("0.4.0", "u", None)) == b"x"
+    artifact = install.Artifact("0.4.0", "https://example.invalid/x", None)
+    assert install.download(artifact) == b"x"
 
 
 def _fake_urlopen(payload: bytes):
@@ -157,7 +200,9 @@ def test_ambiguous_archive_is_refused():
 
 def test_install_writes_an_executable_and_is_found(monkeypatch, home):
     monkeypatch.setattr(
-        install, "resolve", lambda b, **k: install.Artifact("0.4.0", "u", None)
+        install,
+        "resolve",
+        lambda b, **k: install.Artifact("0.4.0", "https://example.invalid/x", None),
     )
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(zipped("sim", b"ELF")))
 
