@@ -54,6 +54,7 @@ PRODUCTS = {
     "sim": "cli",
     "analog-cli": "analog",
     "pyrite": "pyrite",
+    "pyrite-mcp": "pyrite",
 }
 
 #: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.

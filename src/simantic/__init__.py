@@ -18,6 +18,7 @@ fixture manifests — into individually addressable pytest items.
 """
 
 from ._locate import BinaryNotFound, analog_cli
+from .agent import Session, SessionError, ToolError
 from .analog import AnalogCliError, plan_path, plan_test_names, run_tests
 from .fixtures import (
     Manifest,
@@ -67,6 +68,10 @@ __all__ = [
     "run_firmware",
     "run_pyrite",
     "sim_binary",
+    # agent sessions
+    "Session",
+    "SessionError",
+    "ToolError",
     # shared
     "BinaryNotFound",
 ]
