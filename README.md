@@ -93,6 +93,21 @@ run at all — bad project, missing `kicad-cli`, invalid testplan — raise
 
 ### Firmware
 
+The shortest path is a pytest fixture — no manifest, no flags:
+
+```python
+def test_firmware_boots(pyrite):
+    run = pyrite("build/zephyr.elf", board="stm32f401",
+                 expect=["Hello World!"], expect_absent=["FAULT"])
+    assert run.passed, run.failure_report()
+```
+
+`pyrite` runs the ELF offline on the pure-Rust backend and hands back the
+UART transcript. The fixture skips when no binary is installed, so a suite
+stays green on a machine that has not run `smtc install pyrite`.
+
+The same runner is available as a plain function, and `sim` has its own:
+
 ```python
 run = simantic.run_firmware(
     "build/zephyr.elf",

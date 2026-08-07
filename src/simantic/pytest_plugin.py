@@ -181,3 +181,21 @@ def firmware():
     except BinaryNotFound as exc:
         pytest.skip(str(exc))
     return run_firmware
+
+
+@pytest.fixture
+def pyrite():
+    """The pyrite runner, skipping when no binary is installed.
+
+        def test_boot(pyrite):
+            run = pyrite("fw.elf", board="stm32f401", expect=["Hello World!"])
+            assert run.passed, run.failure_report()
+    """
+    from .pyrite import pyrite_binary
+    from .pyrite import run as run_pyrite
+
+    try:
+        pyrite_binary()
+    except BinaryNotFound as exc:
+        pytest.skip(str(exc))
+    return run_pyrite

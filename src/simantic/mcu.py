@@ -55,6 +55,8 @@ class SimRun:
     exit_code: int
     missing: list[str]
     forbidden: list[str]
+    #: Which binary produced this, so a failure names the thing that ran.
+    runner: str = "sim"
 
     @property
     def passed(self) -> bool:
@@ -63,7 +65,7 @@ class SimRun:
     def failure_report(self) -> str:
         lines = []
         if self.exit_code != 0:
-            lines.append(f"sim exited {self.exit_code}")
+            lines.append(f"{self.runner} exited {self.exit_code}")
         for text in self.missing:
             lines.append(f"  expected but not found: {text!r}")
         for text in self.forbidden:

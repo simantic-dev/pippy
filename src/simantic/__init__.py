@@ -27,6 +27,8 @@ from .fixtures import (
 )
 from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
+from .pyrite import pyrite_binary
+from .pyrite import run as run_pyrite
 from .report import (
     Expect,
     Finding,
@@ -61,7 +63,9 @@ __all__ = [
     "SimRun",
     "UnsupportedManifest",
     "load_manifest",
+    "pyrite_binary",
     "run_firmware",
+    "run_pyrite",
     "sim_binary",
     # shared
     "BinaryNotFound",
