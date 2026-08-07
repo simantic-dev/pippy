@@ -52,6 +52,12 @@ def releases_url() -> str:
 PRODUCTS = {
     "sim": "cli",
     "analog-cli": "analog",
+    # pyrite ships a client and the engine that hosts it as two binaries, so
+    # both come from one product. Prefixed because `sim` is already taken by
+    # a different program; when pyrite supersedes it, `sim` moves here and
+    # these names retire.
+    "pyrite-sim": "pyrite",
+    "pyrite-sim-server": "pyrite",
 }
 
 #: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.

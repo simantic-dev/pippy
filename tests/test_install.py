@@ -105,7 +105,7 @@ def test_releases_host_can_be_redirected(monkeypatch):
     assert url == "http://localhost:8765/cli/latest.json"
 
 
-def _requested_url(monkeypatch, env, **kwargs) -> str:
+def _requested_url(monkeypatch, env, *, binary="sim", **kwargs) -> str:
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     seen = []
@@ -116,7 +116,7 @@ def _requested_url(monkeypatch, env, **kwargs) -> str:
 
     monkeypatch.setattr(install.urllib.request, "urlopen", capture)
     with pytest.raises(install.InstallError):
-        install.fetch_manifest("sim", **kwargs)
+        install.fetch_manifest(binary, **kwargs)
     return seen[0]
 
 
@@ -160,6 +160,19 @@ def test_missing_rid_lists_what_is_available(monkeypatch):
     monkeypatch.setattr(install, "fetch_manifest", lambda b, **k: MANIFEST)
     with pytest.raises(install.InstallError, match="available: linux-x64, osx-arm64"):
         install.resolve("sim", rid="win-x64")
+
+
+def test_pyrite_ships_both_binaries_from_one_product(monkeypatch):
+    """The client is useless without the engine that hosts it."""
+    for binary in ("pyrite-sim", "pyrite-sim-server"):
+        url = _requested_url(monkeypatch, {}, binary=binary)
+        assert url.endswith(f"/pyrite/latest.json"), binary
+
+
+def test_pyrite_does_not_claim_the_name_sim(monkeypatch):
+    """A different program already installs as `sim`; overwriting it would
+    leave the user with a binary that is not the one they asked for."""
+    assert install.PRODUCTS["sim"] != "pyrite"
 
 
 def test_unknown_binary_is_refused():
