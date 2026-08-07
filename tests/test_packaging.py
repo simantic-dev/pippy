@@ -1,5 +1,7 @@
 """Guards on the things that only break at publish time."""
 
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -20,6 +22,23 @@ def test_pytest_plugin_entry_point_is_declared():
     with open(PYPROJECT, "rb") as fh:
         entry_points = tomllib.load(fh)["project"]["entry-points"]
     assert entry_points["pytest11"]["simantic"] == "simantic.pytest_plugin"
+
+
+def test_console_script_is_declared():
+    """The `simantic` command; pip generates a native launcher per platform."""
+    with open(PYPROJECT, "rb") as fh:
+        assert tomllib.load(fh)["project"]["scripts"]["simantic"] == "simantic._cli:main"
+
+
+def test_python_dash_m_reaches_the_same_cli():
+    """The fallback when the launcher's directory is not on PATH."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "simantic", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "auth" in proc.stdout and "install" in proc.stdout
 
 
 def test_public_names_are_importable():

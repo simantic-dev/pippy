@@ -31,6 +31,11 @@ finds them there with no further configuration. It fails closed: with no
 stored credentials it stops before any download and tells you to
 authenticate.
 
+If your shell reports `simantic: command not found`, the launcher pip
+generated is in an environment directory that is not on your PATH (most often
+on Windows). `python -m simantic ...` is equivalent and needs only an
+interpreter that can import the package.
+
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
 `simantic status` shows what is authenticated and which binary each name
