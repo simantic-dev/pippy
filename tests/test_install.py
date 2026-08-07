@@ -162,17 +162,11 @@ def test_missing_rid_lists_what_is_available(monkeypatch):
         install.resolve("sim", rid="win-x64")
 
 
-def test_pyrite_ships_both_binaries_from_one_product(monkeypatch):
-    """The client is useless without the engine that hosts it."""
-    for binary in ("pyrite-sim", "pyrite-sim-server"):
-        url = _requested_url(monkeypatch, {}, binary=binary)
-        assert url.endswith(f"/pyrite/latest.json"), binary
-
-
-def test_pyrite_does_not_claim_the_name_sim(monkeypatch):
-    """A different program already installs as `sim`; overwriting it would
-    leave the user with a binary that is not the one they asked for."""
-    assert install.PRODUCTS["sim"] != "pyrite"
+def test_pyrite_is_its_own_product(monkeypatch):
+    """A single self-contained binary, installed under its own name."""
+    assert _requested_url(monkeypatch, {}, binary="pyrite").endswith(
+        "/pyrite/latest.json"
+    )
 
 
 def test_unknown_binary_is_refused():
@@ -237,6 +231,28 @@ def test_extracts_the_named_entry():
 
 def test_extracts_a_lone_entry_under_another_name():
     assert install._extract(zipped("sim-0.4.0", b"ELF"), "sim") == b"ELF"
+
+
+def test_extracts_from_a_gzipped_tarball():
+    """pyrite publishes .tar.gz; passing one through would install a tarball."""
+    assert install._extract(tarred("pyrite", b"ELF"), "pyrite") == b"ELF"
+
+
+def test_extracts_a_nested_entry():
+    """Some archives put the binary under a directory."""
+    assert install._extract(tarred("pyrite-osx-arm64/pyrite", b"ELF"), "pyrite") == b"ELF"
+
+
+def tarred(name: str, body: bytes) -> bytes:
+    import io as _io
+    import tarfile as _tarfile
+
+    buf = _io.BytesIO()
+    with _tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        info = _tarfile.TarInfo(name)
+        info.size = len(body)
+        archive.addfile(info, _io.BytesIO(body))
+    return buf.getvalue()
 
 
 def test_raw_payload_passes_through():

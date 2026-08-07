@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import stat
+import tarfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -52,12 +53,7 @@ def releases_url() -> str:
 PRODUCTS = {
     "sim": "cli",
     "analog-cli": "analog",
-    # pyrite ships a client and the engine that hosts it as two binaries, so
-    # both come from one product. Prefixed because `sim` is already taken by
-    # a different program; when pyrite supersedes it, `sim` moves here and
-    # these names retire.
-    "pyrite-sim": "pyrite",
-    "pyrite-sim-server": "pyrite",
+    "pyrite": "pyrite",
 }
 
 #: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.
@@ -201,22 +197,41 @@ def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
 
 
 def _extract(payload: bytes, binary: str) -> bytes:
-    """The executable inside a release zip, or the payload if it is raw.
+    """The executable inside a release archive, or the payload if it is raw.
 
-    Older manifests pointed straight at the executable, so a non-zip payload
-    is passed through rather than treated as corrupt.
+    Both archive formats the release workflows produce are handled: zip and
+    gzipped tar. Anything else is passed through, because older manifests
+    pointed straight at the executable.
     """
-    if not payload.startswith(b"PK\x03\x04"):
-        return payload
-    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-        names = [n for n in archive.namelist() if not n.endswith("/")]
-        if binary in names:
-            return archive.read(binary)
-        if len(names) == 1:
-            return archive.read(names[0])
-        raise InstallError(
-            f"release archive has no {binary!r} entry (contains: {', '.join(names)})"
-        )
+    if payload.startswith(b"PK\x03\x04"):
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = [n for n in archive.namelist() if not n.endswith("/")]
+            return _pick(names, binary, archive.read)
+    if payload.startswith(b"\x1f\x8b"):
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+            names = [m.name for m in archive.getmembers() if m.isfile()]
+
+            def read(name: str) -> bytes:
+                handle = archive.extractfile(name)
+                if handle is None:  # pragma: no cover - filtered to files above
+                    raise InstallError(f"cannot read {name!r} from the archive")
+                return handle.read()
+
+            return _pick(names, binary, read)
+    return payload
+
+
+def _pick(names: list[str], binary: str, read) -> bytes:
+    """The entry that is the executable, by name or by being the only one."""
+    for name in names:
+        # Release archives sometimes nest the binary under a directory.
+        if name == binary or name.endswith(f"/{binary}"):
+            return read(name)
+    if len(names) == 1:
+        return read(names[0])
+    raise InstallError(
+        f"release archive has no {binary!r} entry (contains: {', '.join(names)})"
+    )
 
 
 def install(binary: str, *, force: bool = False, channel: str | None = None) -> Path:
