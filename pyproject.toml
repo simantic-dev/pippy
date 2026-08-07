@@ -34,6 +34,9 @@ simantic = "simantic.pytest_plugin"
 
 [project.scripts]
 simantic = "simantic._cli:main"
+# `smtc` is the short form, matching the smtc_ token prefix. Same entry point,
+# so the two names cannot drift.
+smtc = "simantic._cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]

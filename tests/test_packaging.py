@@ -24,10 +24,13 @@ def test_pytest_plugin_entry_point_is_declared():
     assert entry_points["pytest11"]["simantic"] == "simantic.pytest_plugin"
 
 
-def test_console_script_is_declared():
-    """The `simantic` command; pip generates a native launcher per platform."""
+def test_console_scripts_are_declared():
+    """The commands; pip generates a native launcher per platform."""
     with open(PYPROJECT, "rb") as fh:
-        assert tomllib.load(fh)["project"]["scripts"]["simantic"] == "simantic._cli:main"
+        scripts = tomllib.load(fh)["project"]["scripts"]
+    # `smtc` is the short form. Both must resolve to the same callable.
+    assert scripts["simantic"] == "simantic._cli:main"
+    assert scripts["smtc"] == scripts["simantic"]
 
 
 def test_python_dash_m_reaches_the_same_cli():

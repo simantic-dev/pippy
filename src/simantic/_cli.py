@@ -69,8 +69,10 @@ def _status(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # prog is left to argparse so usage reflects however it was invoked:
+    # `simantic`, the short `smtc`, or `python -m simantic`.
     parser = argparse.ArgumentParser(
-        prog="simantic", description="Simantic SDK: authentication and binaries."
+        description="Simantic SDK: authentication and binaries."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
