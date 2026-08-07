@@ -99,6 +99,12 @@ def test_explicit_channel_beats_the_environment(monkeypatch):
     assert url.endswith("/cli/latest.json")
 
 
+def test_releases_host_can_be_redirected(monkeypatch):
+    """Rehearse a release against staging before publishing it."""
+    url = _requested_url(monkeypatch, {"SIMANTIC_RELEASES_URL": "http://localhost:8765/"})
+    assert url == "http://localhost:8765/cli/latest.json"
+
+
 def _requested_url(monkeypatch, env, **kwargs) -> str:
     for key, value in env.items():
         monkeypatch.setenv(key, value)

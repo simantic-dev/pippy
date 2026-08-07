@@ -37,6 +37,16 @@ from . import auth
 
 RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases"
 
+
+def releases_url() -> str:
+    """Where manifests are served from. $SIMANTIC_RELEASES_URL overrides.
+
+    Overridable so a release can be rehearsed against a staging host before
+    it is published, and so the base can later move behind an endpoint that
+    checks the token this client already sends.
+    """
+    return os.environ.get("SIMANTIC_RELEASES_URL", RELEASES_URL).rstrip("/")
+
 #: Binary name -> release product prefix. A product that has published no
 #: manifest yet fails with a clear message rather than a stray 404.
 PRODUCTS = {
@@ -117,7 +127,7 @@ def fetch_manifest(
         raise InstallError(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
-    url = f"{RELEASES_URL}/{product}/{channel or default_channel()}.json"
+    url = f"{releases_url()}/{product}/{channel or default_channel()}.json"
     request = urllib.request.Request(url, headers=_headers())
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
