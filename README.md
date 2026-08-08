@@ -131,6 +131,24 @@ Some installations need a separate simulation server. When one does, the SDK
 raises `ServerNotConfigured` and the pytest plugin skips, rather than
 reporting a firmware failure.
 
+## Telemetry
+
+When you are authenticated, a completed pytest session reports its **shape**
+to your account: how many simulator tests ran, how many passed, failed, or
+skipped, plus this package's version, your Python version, OS, and CPU
+architecture. One request per `pytest` invocation, never per test.
+
+It does **not** send file paths, project names, test names, firmware, or
+simulation output. Those are yours.
+
+```bash
+export SIMANTIC_TELEMETRY=0     # or DO_NOT_TRACK=1
+```
+
+`smtc status` prints exactly what is sent and whether it is on. Reporting is
+best-effort: if it fails, is blocked, or you are offline, your tests are
+unaffected and nothing is printed.
+
 ## Compatibility
 
 Speaks the `analog-cli.test-report/1` schema. Additive fields within that

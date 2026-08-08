@@ -11,7 +11,7 @@ import argparse
 import getpass
 import sys
 
-from . import auth, install
+from . import auth, install, telemetry
 from ._locate import BinaryNotFound, locate
 from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
@@ -65,6 +65,7 @@ def _status(args) -> int:
             print(f"  {name}: {locate(name, env)}")
         except BinaryNotFound:
             print(f"  {name}: not found (run `simantic install {name}`)")
+    print(telemetry.describe())
     return 0
 
 

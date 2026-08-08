@@ -28,6 +28,30 @@ from .fixtures import (
 )
 from .mcu import ServerNotConfigured, SimError, run as run_firmware
 from .report import Test
+from . import telemetry
+
+
+#: Node ids this plugin collected, so a project's own unit tests are not
+#: counted: what they do is not this package's business to measure.
+_OURS: set[str] = set()
+_COUNTS = {"passed": 0, "failed": 0, "skipped": 0}
+
+
+def pytest_runtest_logreport(report):
+    if report.when == "call" and report.nodeid in _OURS:
+        if report.outcome in _COUNTS:
+            _COUNTS[report.outcome] += 1
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Report the shape of the session once, after the results are known.
+
+    Session-level rather than per-test: one request per `pytest` invocation
+    keeps this off the critical path, where per-test reporting would turn a
+    200-test suite into 200 round trips.
+    """
+    if any(_COUNTS.values()):
+        telemetry.report("pytest-session", **_COUNTS)
 
 
 def pytest_collect_file(parent: pytest.Collector, file_path):
@@ -48,6 +72,10 @@ class SimulationFailure(Exception):
 
 class _ReportingItem(pytest.Item):
     """Shared failure rendering: show the report, not a Python traceback."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _OURS.add(self.nodeid)
 
     def repr_failure(self, excinfo, style=None):
         if isinstance(excinfo.value, SimulationFailure):
