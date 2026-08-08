@@ -138,6 +138,12 @@ to your account: how many simulator tests ran, how many passed, failed, or
 skipped, plus this package's version, your Python version, OS, and CPU
 architecture. One request per `pytest` invocation, never per test.
 
+It also counts **which calls you make** — SDK functions, MCP tool names, and
+`smtc` subcommands, by name only. These are buffered in
+`~/.simantic/usage.jsonl` and uploaded as counts at most once an hour, so no
+simulation ever waits on the network. You can read that file at any time; it
+is one JSON object per line and contains nothing but call names.
+
 It does **not** send file paths, project names, test names, firmware, or
 simulation output. Those are yours.
 

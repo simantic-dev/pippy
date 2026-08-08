@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ._locate import locate
+from . import telemetry
 
 ENV_VAR = "SIMANTIC_PYRITE_MCP"
 BINARY = "pyrite-mcp"
@@ -110,6 +111,7 @@ class Session:
         A tool that reports failure raises ToolError rather than returning a
         payload the caller has to inspect to notice something went wrong.
         """
+        telemetry.record(f"mcp.{tool}")
         result = self._request("tools/call", {"name": tool, "arguments": arguments})
         payload = _parsed(result)
         # The envelope's isError is not trusted: pyrite-mcp sets it on

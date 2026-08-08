@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ._locate import locate
 from .mcu import SimError, SimRun
+from . import telemetry
 
 ENV_VAR = "SIMANTIC_PYRITE"
 BINARY = "pyrite"
@@ -46,6 +47,7 @@ def run(
     if (board is None) == (repl is None):
         raise ValueError("give exactly one of board= or repl=")
 
+    telemetry.record("sdk.run_pyrite")
     cmd = [str(pyrite_binary(binary)), "run", "--elf", str(elf), "--timeout", str(timeout)]
     cmd += ["--board", board] if board is not None else ["--repl", str(repl)]
 

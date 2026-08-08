@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._locate import analog_cli
+from . import telemetry
 from .report import ReportError, TestReport
 
 #: Exit codes that still produce a report: everything ran, verdicts inside.
@@ -53,6 +54,7 @@ def run_tests(
     A failing test is a normal outcome and comes back in the report; only
     conditions that prevent a run at all raise AnalogCliError.
     """
+    telemetry.record("sdk.run_tests")
     cmd = [str(analog_cli(binary)), "test", "-p", str(project), "--format", "json"]
     if plan is not None:
         cmd += ["--plan", str(plan)]

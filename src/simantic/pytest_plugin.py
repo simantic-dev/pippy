@@ -52,6 +52,9 @@ def pytest_terminal_summary(terminalreporter):
     """
     if any(_COUNTS.values()):
         telemetry.report("pytest-session", **_COUNTS)
+    # Session end is the only point in a test run where a round trip costs
+    # nobody anything; the spool itself is due at most hourly.
+    telemetry.flush()
 
 
 def pytest_collect_file(parent: pytest.Collector, file_path):

@@ -100,8 +100,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    telemetry.record(f"cli.{args.command}")
     try:
-        return args.func(args)
+        result = args.func(args)
+        # A CLI invocation is a natural moment to upload: the user is not
+        # waiting on a simulation, and the spool is due at most hourly.
+        telemetry.flush()
+        return result
     except (auth.AuthError, install.InstallError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._locate import locate
+from . import telemetry
 
 ENV_VAR = "SIMANTIC_SIM"
 BINARY = "sim"
@@ -112,6 +113,7 @@ def run(
         raise ValueError("give exactly one of repl= or mcu=")
     if backend is not None and backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
+    telemetry.record("sdk.run_firmware")
     with tempfile.TemporaryDirectory() as tmp:
         out_path = Path(tmp) / "uart.txt"
         cmd = [
