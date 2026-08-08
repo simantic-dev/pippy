@@ -29,6 +29,7 @@ import platform
 import stat
 import tarfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -112,14 +113,26 @@ def current_rid() -> str:
     return f"{system}-{arch}"
 
 
-def _headers() -> dict[str, str]:
+def _headers(url: str) -> dict[str, str]:
     """Authorization for a release request.
 
     Raises NotAuthenticated rather than falling back to an anonymous fetch:
     an install must fail closed, and failing here costs nothing but a clear
     message before any network round trip.
+
+    The token is only attached to the release host itself. Artifact URLs come
+    out of a manifest, which is data rather than code — a manifest naming
+    another host would otherwise have this client hand that host the user's
+    credentials. Off-host downloads still happen; they happen anonymously.
     """
-    return {"Authorization": f"Bearer {auth.load().api_key}"}
+    credentials = auth.load()  # fail closed before any request, wherever it goes
+    target, home = urllib.parse.urlparse(url), urllib.parse.urlparse(releases_url())
+    # Same host, and never in the clear: a bearer token on http is readable by
+    # anything on the path, so a staging or local host gets an anonymous fetch
+    # rather than the user's credentials.
+    if target.netloc != home.netloc or target.scheme != "https":
+        return {}
+    return {"Authorization": f"Bearer {credentials.api_key}"}
 
 
 def fetch_manifest(
@@ -131,7 +144,7 @@ def fetch_manifest(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     url = f"{releases_url()}/{product}/{channel or default_channel()}.json"
-    request = urllib.request.Request(url, headers=_headers())
+    request = urllib.request.Request(url, headers=_headers(url))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
@@ -173,7 +186,7 @@ def resolve(
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
-    request = urllib.request.Request(artifact.url, headers=_headers())
+    request = urllib.request.Request(artifact.url, headers=_headers(artifact.url))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
