@@ -25,7 +25,10 @@ import urllib.request
 
 from . import auth
 
-REPORT_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/report-usage"
+#: Deliberately not `report-usage`. That endpoint feeds the run statistics,
+#: which count every row as a simulation and treat a missing exit code as a
+#: failure — a call-count report there would corrupt a live metric.
+REPORT_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/report-sdk-usage"
 
 #: The server caps a report at 16 KB. Nothing here approaches it, and the
 #: cap is enforced locally so an oversized report is dropped rather than

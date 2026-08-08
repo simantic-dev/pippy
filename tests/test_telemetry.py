@@ -44,6 +44,14 @@ def test_a_session_is_reported(monkeypatch):
     assert body["client"] == "simantic-py"
 
 
+def test_reports_go_to_the_sdk_endpoint(monkeypatch):
+    """Not report-usage: that feeds run statistics, which count every row as a
+    simulation and a missing exit code as a failure."""
+    seen = sent(monkeypatch)
+    telemetry.report("usage", calls={"mcp.gdb_step": 1})
+    assert seen[0].full_url.endswith("/report-sdk-usage")
+
+
 def test_the_token_authenticates_the_report(monkeypatch):
     seen = sent(monkeypatch)
     telemetry.report("pytest-session", passed=1)
