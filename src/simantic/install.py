@@ -49,6 +49,27 @@ def releases_url() -> str:
     """
     return os.environ.get("SIMANTIC_RELEASES_URL", RELEASES_URL).rstrip("/")
 
+
+#: Trades the token for a short-lived signed URL into a private bucket.
+#:
+#: The token check has to happen on the server. This installer is readable —
+#: it names its own download URL — so a check performed here is a check any
+#: reader can skip by fetching that URL directly. The engine is about a
+#: megabyte; re-hosting it is a `curl` and an upload. Only an object that
+#: cannot be fetched without a signature makes the check mean anything.
+GATE_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/get-release"
+
+
+def gate_url() -> str:
+    """The signing endpoint, or "" to fetch straight from a public bucket.
+
+    Set $SIMANTIC_GATE_URL="" together with $SIMANTIC_RELEASES_URL to install
+    from a plain directory of files — used by the tests and by anyone serving
+    their own mirror. Unset, the gated path is what runs.
+    """
+    configured = os.environ.get("SIMANTIC_GATE_URL")
+    return (GATE_URL if configured is None else configured).rstrip("/")
+
 #: Binary name -> release product prefix. A product that has published no
 #: manifest yet fails with a clear message rather than a stray 404.
 PRODUCTS = {
@@ -75,6 +96,12 @@ class Artifact:
     version: str
     url: str
     sha256: str | None
+    #: Set when the manifest names an object in a gated bucket rather than a
+    #: public URL. Signed at download time, because a signature minted when
+    #: the manifest was read may have expired by the time the bytes are
+    #: wanted.
+    path: str | None = None
+    channel: str | None = None
 
 
 def simantic_home() -> Path:
@@ -135,6 +162,56 @@ def _headers(url: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {credentials.api_key}"}
 
 
+def signed_url(path: str, *, channel: str | None = None, timeout: float = 30) -> str:
+    """Ask the gate to sign `path`, proving the token before anything is served.
+
+    A 401 here is the gate doing its job, so it is reported as such rather
+    than as a download failure.
+    """
+    credentials = auth.load()  # fail closed before the request
+    endpoint = (
+        f"{gate_url()}?path={urllib.parse.quote(path)}"
+        f"&channel={urllib.parse.quote(channel or default_channel())}"
+    )
+    request = urllib.request.Request(
+        endpoint, headers={"Authorization": f"Bearer {credentials.api_key}"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise auth.NotAuthenticated(
+                f"the backend rejected your credentials (HTTP {exc.code}) — "
+                "run `smtc auth`"
+            ) from None
+        if exc.code == 404:
+            raise InstallError(f"no release artifact at {path!r}") from None
+        raise InstallError(f"release gate failed: HTTP {exc.code}") from None
+    except urllib.error.URLError as exc:
+        raise InstallError(f"cannot reach the release gate: {exc.reason}") from None
+    except json.JSONDecodeError as exc:
+        raise InstallError(f"release gate returned invalid JSON: {exc}") from None
+
+    url = body.get("url")
+    if not isinstance(url, str) or not url:
+        raise InstallError("release gate returned no URL")
+    return url
+
+
+def _object_url(path: str, *, channel: str | None = None) -> tuple[str, dict[str, str]]:
+    """Where to fetch a release object from, and what to send with it.
+
+    A signed URL carries its own authorisation in the query string, and the
+    storage endpoint expects a JWT in an Authorization header — sending the
+    PAT alongside it would be rejected. So a signed fetch sends no headers.
+    """
+    if gate_url():
+        return signed_url(path, channel=channel), {}
+    url = f"{releases_url()}/{path}"
+    return url, _headers(url)
+
+
 def fetch_manifest(
     binary: str, *, channel: str | None = None, timeout: float = 30
 ) -> dict:
@@ -143,8 +220,9 @@ def fetch_manifest(
         raise InstallError(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
-    url = f"{releases_url()}/{product}/{channel or default_channel()}.json"
-    request = urllib.request.Request(url, headers=_headers(url))
+    channel = channel or default_channel()
+    url, headers = _object_url(f"{product}/{channel}.json", channel=channel)
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
@@ -176,17 +254,29 @@ def resolve(
 
     rid = rid or current_rid()
     entry = artifacts.get(rid)
-    if not entry or not entry.get("url"):
+    # A gated manifest names `path` (an object in a private bucket); a public
+    # one names `url`. Either is enough to locate the build.
+    if not entry or not (entry.get("url") or entry.get("path")):
         available = ", ".join(sorted(artifacts)) or "none"
         raise InstallError(
             f"no {rid} build in {binary} release {version} (available: {available})"
         )
-    return Artifact(version=version, url=entry["url"], sha256=entry.get("sha256"))
+    return Artifact(
+        version=version,
+        url=entry.get("url", ""),
+        sha256=entry.get("sha256"),
+        path=entry.get("path"),
+        channel=channel or default_channel(),
+    )
 
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
-    request = urllib.request.Request(artifact.url, headers=_headers(artifact.url))
+    if artifact.path:
+        url, headers = _object_url(artifact.path, channel=artifact.channel)
+    else:
+        url, headers = artifact.url, _headers(artifact.url)
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()

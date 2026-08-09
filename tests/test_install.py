@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import json
 import os
 import zipfile
 
@@ -25,6 +26,11 @@ def home(tmp_path, monkeypatch):
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
     # Fetching requires an account, so the common case here is authenticated.
     auth.save("smtc_" + "a" * 32, "dev@example.com")
+    # Most of this file is about what happens to a URL once it is known —
+    # channels, products, checksums, placement. The gate that decides *which*
+    # URL is exercised in "the release gate" below, and turned off here so
+    # those tests read the direct one.
+    monkeypatch.setenv("SIMANTIC_GATE_URL", "")
     return tmp_path
 
 
@@ -362,3 +368,113 @@ def test_not_found_message_points_at_the_installer(home, monkeypatch):
     monkeypatch.setenv("PATH", "")  # a real sim on the dev machine must not leak in
     with pytest.raises(BinaryNotFound, match="simantic install sim"):
         locate("sim", "SIMANTIC_SIM")
+
+
+# --- the release gate ---
+#
+# The engine is about a megabyte, so a token checked inside this installer is
+# not a gate: the installer names its own download URL, and anyone who reads it
+# can fetch that URL directly. These tests pin the behaviour that makes the
+# check real — an object is reached through a signature the server mints, and
+# only after it has seen a valid token.
+
+
+def gated(monkeypatch, responses):
+    """Run with the gate on, capturing requests and replying from `responses`."""
+    monkeypatch.delenv("SIMANTIC_GATE_URL", raising=False)
+    seen = []
+
+    class Response:
+        def __init__(self, body):
+            self._body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def read(self):
+            return self._body
+
+    def capture(request, **k):
+        seen.append(request)
+        return Response(responses.pop(0))
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
+    return seen
+
+
+SIGNED = b'{"url": "https://signed.invalid/m", "expires_in": 300}'
+
+
+def test_the_manifest_is_fetched_through_the_gate(monkeypatch):
+    """Not from a public URL: that is the whole point."""
+    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
+    assert install.fetch_manifest("pyrite") == MANIFEST
+    assert seen[0].full_url.startswith(install.GATE_URL)
+    assert "path=pyrite/latest.json" in seen[0].full_url
+    assert seen[1].full_url == "https://signed.invalid/m"
+
+
+def test_the_token_authenticates_the_gate_not_the_download(monkeypatch):
+    """A signed URL carries its own authorisation, and the storage endpoint
+    would reject a PAT in an Authorization header alongside it."""
+    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
+    install.fetch_manifest("pyrite")
+    assert seen[0].get_header("Authorization") == "Bearer smtc_" + "a" * 32
+    assert seen[1].get_header("Authorization") is None
+
+
+def test_the_channel_reaches_the_gate(monkeypatch):
+    """The bucket is chosen server-side, so the channel has to travel."""
+    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
+    install.fetch_manifest("pyrite", channel="testing")
+    assert "channel=testing" in seen[0].full_url
+    assert "path=pyrite/testing.json" in seen[0].full_url
+
+
+def test_a_gated_manifest_names_a_path_not_a_url(monkeypatch):
+    """An artifact in a private bucket has no URL to publish, so the manifest
+    names the object and the signature is minted at download time — a five
+    minute signature taken when the manifest was read could be stale."""
+    manifest = {
+        "version": "0.2.0",
+        "artifacts": {"osx-arm64": {"path": "pyrite/0.2.0/osx-arm64.tar.gz"}},
+    }
+    seen = gated(
+        monkeypatch,
+        [
+            SIGNED,
+            json.dumps(manifest).encode(),
+            b'{"url": "https://signed.invalid/artifact"}',
+            b"binary",
+        ],
+    )
+    artifact = install.resolve("pyrite", rid="osx-arm64")
+    assert artifact.path == "pyrite/0.2.0/osx-arm64.tar.gz"
+    assert install.download(artifact) == b"binary"
+    assert "path=pyrite/0.2.0/osx-arm64.tar.gz" in seen[2].full_url
+
+
+def test_a_rejected_token_at_the_gate_says_to_authenticate(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_GATE_URL", raising=False)
+
+    def refuse(request, **k):
+        raise install.urllib.error.HTTPError(request.full_url, 401, "no", {}, None)
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", refuse)
+    with pytest.raises(auth.NotAuthenticated, match="smtc auth"):
+        install.fetch_manifest("pyrite")
+
+
+def test_an_unauthenticated_user_never_reaches_the_gate(monkeypatch, home):
+    (home / ".sim_id").unlink()
+    monkeypatch.delenv("SIMANTIC_GATE_URL", raising=False)
+
+    def explode(*a, **k):
+        raise AssertionError("a request was made without credentials")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", explode)
+    with pytest.raises(auth.NotAuthenticated):
+        install.fetch_manifest("pyrite")
