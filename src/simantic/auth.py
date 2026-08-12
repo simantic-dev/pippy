@@ -7,13 +7,18 @@ the CLIs too, and vice versa.
 
 from __future__ import annotations
 
+import json
 import os
+import time
 import urllib.error
 import urllib.request
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
 VALIDATE_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/validate-token"
+LOGIN_START_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/cli-login-start"
+LOGIN_POLL_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/cli-login-poll"
 
 #: Personal access tokens carry this prefix; anything else is a paste error.
 TOKEN_PREFIX = "smtc_"
@@ -111,8 +116,6 @@ def validate(token: str, *, timeout: float = 10) -> str:
 
 def _email_from(body: str) -> str:
     """The email in a validate-token response, or "" if it carries none."""
-    import json
-
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
@@ -152,3 +155,67 @@ def login(token: str) -> Credentials:
     email = validate(token)
     save(token, email)
     return Credentials(email=email, api_key=token)
+
+
+def _post_json(url: str, body: dict, *, timeout: float) -> dict:
+    """POST a JSON body, return the JSON response. Shared by start and poll."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace").strip()[:200]
+        raise AuthError(f"{url} returned HTTP {exc.code}: {detail}") from None
+    except urllib.error.URLError as exc:
+        raise AuthError(f"cannot reach the simantic backend: {exc.reason}") from None
+    except json.JSONDecodeError as exc:
+        raise AuthError(f"{url} returned invalid JSON: {exc}") from None
+
+
+def browser_login(*, open_browser: bool = True, timeout: float = 600) -> Credentials:
+    """Authenticate via the device flow: a browser tab, not a pasted token.
+
+    Mirrors `gh auth login` — the code is printed so it is visible even when
+    the browser can't be opened (headless, SSH), and the URL is printed
+    unconditionally as the fallback for that case.
+    """
+    start_url = os.environ.get("SIMANTIC_CLI_LOGIN_START_URL", LOGIN_START_URL)
+    poll_url = os.environ.get("SIMANTIC_CLI_LOGIN_POLL_URL", LOGIN_POLL_URL)
+
+    start = _post_json(start_url, {}, timeout=10)
+    device_code = start.get("device_code")
+    user_code = start.get("user_code")
+    verify_url = start.get("verify_url")
+    interval = start.get("interval", 3)
+    if not device_code or not user_code or not verify_url:
+        raise AuthError(f"{start_url} returned an incomplete response")
+
+    print(f"First copy your one-time code: {user_code}")
+    print(f"Then open this URL in your browser to confirm: {verify_url}")
+    if open_browser:
+        try:
+            webbrowser.open(verify_url)
+        except Exception:
+            pass  # the URL above is already the fallback
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        result = _post_json(poll_url, {"device_code": device_code}, timeout=10)
+        status = result.get("status")
+        if status == "approved":
+            token, email = result.get("token"), result.get("email", "")
+            if not token:
+                raise AuthError(f"{poll_url} approved without a token")
+            save(token, email)
+            return Credentials(email=email, api_key=token)
+        if status == "pending":
+            continue
+        raise AuthError(f"sign-in {status}")
+
+    raise AuthError("timed out waiting for browser approval")

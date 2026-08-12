@@ -219,6 +219,18 @@ def test_pyrite_is_its_own_product(monkeypatch):
     )
 
 
+def test_install_and_status_cover_every_product():
+    """`PRODUCTS` names what can be fetched; `_cli.BINARIES` is what the bare
+    `simantic install`/`simantic status` cover — pyrite had a real product
+    entry but was missing from BINARIES, so it silently sat out both.
+    """
+    from simantic import _cli
+
+    assert {name for name, _ in _cli.BINARIES} == set(install.PRODUCTS) - {
+        "pyrite-mcp"
+    }
+
+
 def test_unknown_binary_is_refused():
     with pytest.raises(install.InstallError, match="unknown binary"):
         install.fetch_manifest("not-a-simulator")
