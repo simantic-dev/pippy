@@ -17,19 +17,29 @@ from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
 from ._locate import BINARY as ANALOG_BINARY
 from ._locate import ENV_VAR as ANALOG_ENV
+from .pyrite import BINARY as PYRITE_BINARY
+from .pyrite import ENV_VAR as PYRITE_ENV
 
-BINARIES = ((ANALOG_BINARY, ANALOG_ENV), (SIM_BINARY, SIM_ENV))
+BINARIES = (
+    (ANALOG_BINARY, ANALOG_ENV),
+    (SIM_BINARY, SIM_ENV),
+    (PYRITE_BINARY, PYRITE_ENV),
+)
 
 
 def _auth(args) -> int:
     token = args.token
     if token is None and not sys.stdin.isatty():
         token = sys.stdin.read().strip()
-    if token is None:
+    if token is not None:
+        credentials = auth.login(token)
+    elif sys.stdin.isatty() and not args.no_browser:
+        credentials = auth.browser_login()
+    else:
         # Echo off: argv is visible to `ps`, and so is a shell history entry.
         token = getpass.getpass("Personal access token (smtc_...): ").strip()
+        credentials = auth.login(token)
 
-    credentials = auth.login(token)
     where = auth.sim_id_path()
     who = f" for {credentials.email}" if credentials.email else ""
     print(f"Credentials saved to {where}{who}")
@@ -80,7 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     p_auth = sub.add_parser("auth", help="store backend credentials in ~/.sim_id")
     p_auth.add_argument(
         "--token",
-        help="personal access token; prompted for, or read from stdin, when omitted",
+        help="personal access token; opens a browser sign-in, or reads stdin "
+        "when piped, when omitted",
+    )
+    p_auth.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="prompt for a token instead of opening a browser",
     )
     p_auth.set_defaults(func=_auth)
 

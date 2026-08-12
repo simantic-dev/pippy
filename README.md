@@ -21,9 +21,12 @@ simantic auth              # required: authenticates against your account
 simantic install           # fetch the simulator binaries
 ```
 
-`simantic auth` stores a personal access token in `~/.sim_id` — the same file
-the CLIs use, so one login covers all of them. Create a token on the
-dashboard's `/account/api` page.
+`simantic auth` opens a browser tab to sign in — like `gh auth login` — and
+stores the resulting token in `~/.sim_id`, the same file the CLIs use, so one
+login covers all of them. In a script or CI, pass `--token` or pipe one in
+(`echo $TOKEN | simantic auth`) instead of opening a browser. Create a token
+on the dashboard's `/account/api` page. `--no-browser` falls back to an
+interactive prompt for a pasted token.
 
 `simantic install` then downloads the binaries into `~/.simantic/bin`,
 verifying each against the checksum in the release manifest, and the SDK
