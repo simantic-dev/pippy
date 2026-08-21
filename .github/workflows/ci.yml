@@ -11,11 +11,28 @@
 
 name: ci
 
+# DOCS ARE INERT. Prose-only commits compile nothing here. Safe only while main
+# carries no required status checks — a path-filtered-away required check sits
+# `Pending` forever and blocks the merge.
+# (Actions does not support YAML anchors, hence the duplication.)
 on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
+      - 'LICENSE'
   pull_request:
+    # `ready_for_review` is NOT a default activity type. Without it, flipping a
+    # draft to ready fires no event, so the macOS leg gated below never runs.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.claude/**'
+      - 'LICENSE'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,10 +41,19 @@ concurrency:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # The SDK is pure Python, so a macOS runner proves very little here that
+    # Linux does not — and it bills at $0.062/min against Linux's $0.006, with a
+    # 10x draw on the included-minutes allowance. Two of the six legs were
+    # macOS. It now joins on a push to main, on a v* tag (a release should be
+    # proven on all three), and on a pull request once marked ready for review.
+    # Windows is left unconditional: at 2x it is not what the bill is made of.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+          && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]')
+          || fromJSON('["ubuntu-latest", "windows-latest"]') }}
         # 3.11 is the floor (tomllib landed there); 3.13 guards the top end.
         python: ["3.11", "3.13"]
     steps:
@@ -38,6 +64,7 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -54,6 +81,7 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi
     permissions:
       id-token: write # required for trusted publishing; nothing else is
