@@ -47,11 +47,14 @@ def _auth(args) -> int:
 
 
 def _install(args) -> int:
-    names = args.binary or [name for name, _ in BINARIES]
+    names = args.binary or [name for name, _ in BINARIES] + [install.ENGINE_KEY]
     failures = 0
     for name in names:
         try:
-            path = install.install(name, force=args.force, channel=args.channel)
+            if name == install.ENGINE_KEY:
+                path = install.install_engine(force=args.force, channel=args.channel)
+            else:
+                path = install.install(name, force=args.force, channel=args.channel)
             print(f"{name}: {path}")
         except install.InstallError as exc:
             print(f"{name}: {exc}", file=sys.stderr)
@@ -75,6 +78,8 @@ def _status(args) -> int:
             print(f"  {name}: {locate(name, env)}")
         except BinaryNotFound:
             print(f"  {name}: not found (run `simantic install {name}`)")
+    engine = install.installed_engine()
+    print(f"  engine: {engine if engine else 'not found (fetched on first use, or `simantic install engine`)'}")
     print(telemetry.describe())
     return 0
 
@@ -101,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.set_defaults(func=_auth)
 
     p_install = sub.add_parser("install", help="download simulator binaries")
-    p_install.add_argument("binary", nargs="*", help="defaults to all known binaries")
+    p_install.add_argument("binary", nargs="*", help="defaults to all known binaries and the engine")
     p_install.add_argument(
         "--force", action="store_true", help="re-download even if already present"
     )

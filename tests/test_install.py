@@ -490,3 +490,78 @@ def test_an_unauthenticated_user_never_reaches_the_gate(monkeypatch, home):
     monkeypatch.setattr(install.urllib.request, "urlopen", explode)
     with pytest.raises(auth.NotAuthenticated):
         install.fetch_manifest("pyrite")
+
+
+# -- the engine archive ------------------------------------------------------
+
+
+def engine_tar(files: dict[str, bytes]) -> bytes:
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, body in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+    return buf.getvalue()
+
+
+ENGINE_FILES = {
+    "Simantic.Core.dll": b"dll",
+    "sim.runtimeconfig.json": b"{}",
+    "dotnet/host/fxr/10.0.0/libhostfxr.dylib": b"fxr",
+}
+
+
+def test_install_engine_unpacks_under_a_version_dir(home, monkeypatch):
+    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
+        version="0.9.0", url="https://releases.example/engine.tgz", sha256=None))
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(ENGINE_FILES))
+    target = install.install_engine()
+    assert target == install.engine_root() / "0.9.0"
+    assert (target / "Simantic.Core.dll").read_bytes() == b"dll"
+    assert (target / "dotnet" / "host" / "fxr" / "10.0.0" / "libhostfxr.dylib").exists()
+    assert install.installed_engine() == target
+
+
+def test_install_engine_asks_for_the_engine_rid(home, monkeypatch):
+    seen = {}
+
+    def resolve(binary, rid=None, channel=None):
+        seen["rid"] = rid
+        return install.Artifact(version="0.9.0", url="u", sha256=None)
+
+    monkeypatch.setattr(install, "resolve", resolve)
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(ENGINE_FILES))
+    install.install_engine()
+    assert seen["rid"] == f"engine-{install.current_rid()}"
+
+
+def test_installed_engine_picks_the_newest_version(home, monkeypatch):
+    for v in ("0.9.0", "0.10.0", "0.9.1"):
+        d = install.engine_root() / v
+        d.mkdir(parents=True)
+        (d / "Simantic.Core.dll").write_bytes(b"")
+        (d / "sim.runtimeconfig.json").write_bytes(b"{}")
+    assert install.installed_engine().name == "0.10.0"
+
+
+def test_engine_archive_paths_must_stay_inside(home, monkeypatch):
+    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
+        version="0.9.0", url="u", sha256=None))
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar({"../escape": b"x"}))
+    with pytest.raises(install.InstallError):
+        install.install_engine()
+
+
+def test_engine_dir_explains_when_unauthenticated(home, monkeypatch):
+    from simantic import engine
+
+    monkeypatch.delenv("SIMANTIC_SIM", raising=False)
+    monkeypatch.delenv("SIMANTIC_ENGINE_DIR", raising=False)
+    monkeypatch.setenv("PATH", "")
+    auth.sim_id_path().unlink(missing_ok=True)
+    with pytest.raises(engine.EngineNotFound, match="simantic auth"):
+        engine.engine_dir()

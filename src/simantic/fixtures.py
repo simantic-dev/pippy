@@ -119,11 +119,15 @@ def resolved_models() -> Path:
 
 def platform_for(manifest: Manifest, workdir: Path) -> Path:
     """The .replx to hand `sim --repl`, with any overlay fragment appended."""
-    base = resolved_models() / f"{manifest.mcu}.replx"
-    if not base.exists():
-        raise ModelLibraryUnavailable(f"mcu {manifest.mcu} is not in the model library")
+    return platform_path(manifest.mcu, manifest.overlay_path, workdir)
 
-    overlay = manifest.overlay_path
+
+def platform_path(mcu: str, overlay: Path | None, workdir: Path) -> Path:
+    """Resolve `mcu` from the local model library, appending `overlay` if given."""
+    base = resolved_models() / f"{mcu}.replx"
+    if not base.exists():
+        raise ModelLibraryUnavailable(f"mcu {mcu} is not in the model library")
+
     if overlay is None:
         return base
 
@@ -135,6 +139,6 @@ def platform_for(manifest: Manifest, workdir: Path) -> Path:
         for line in overlay.read_text().splitlines()
         if not line.lstrip().startswith(("#", "//"))
     )
-    merged = workdir / f"{manifest.mcu}-overlaid.replx"
+    merged = workdir / f"{mcu}-overlaid.replx"
     merged.write_text(base.read_text().rstrip() + "\n\n" + body.strip() + "\n")
     return merged

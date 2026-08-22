@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import platform
 import stat
 import tarfile
@@ -358,6 +359,74 @@ def install(binary: str, *, force: bool = False, channel: str | None = None) -> 
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         raise InstallError(f"cannot write {target}: {exc}") from None
+    return target
+
+
+# -- the engine: Simantic.Core + a private .NET runtime, for in-process use ----
+
+ENGINE_KEY = "engine"
+
+
+def engine_root() -> Path:
+    """Where engine releases live: ~/.simantic/engine/<version>/."""
+    return simantic_home() / "engine"
+
+
+def installed_engine() -> Path | None:
+    """The newest installed engine directory, or None."""
+    root = engine_root()
+    if not root.exists():
+        return None
+    candidates = [
+        d for d in root.iterdir()
+        if (d / "Simantic.Core.dll").exists() and (d / "sim.runtimeconfig.json").exists()
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda d: _version_key(d.name))
+
+
+def _version_key(name: str) -> tuple:
+    parts = []
+    for piece in name.replace("-", ".").split("."):
+        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
+    return tuple(parts)
+
+
+def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
+    """Download the engine archive for this machine into engine_root()/<version>.
+
+    The archive is the `sim` publish directory (Simantic.Core.dll and friends)
+    plus a `dotnet/` runtime, published under the manifest key
+    `engine-<rid>` of the `sim` release, so it needs the same credentials and
+    goes through the same gate as the binaries.
+    """
+    artifact = resolve("sim", rid=f"{ENGINE_KEY}-{current_rid()}", channel=channel)
+    target = engine_root() / artifact.version
+    if (target / "Simantic.Core.dll").exists() and not force:
+        return target
+
+    payload = download(artifact)
+    if not payload.startswith(b"\x1f\x8b"):
+        raise InstallError("engine artifact is not a gzipped tar archive")
+    incoming = target.with_name(f".{artifact.version}.incoming")
+    if incoming.exists():
+        shutil.rmtree(incoming)
+    incoming.mkdir(parents=True)
+    try:
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+            for member in archive.getmembers():
+                # Refuse anything that would land outside the target.
+                dest = (incoming / member.name).resolve()
+                if not str(dest).startswith(str(incoming.resolve())):
+                    raise InstallError(f"engine archive has an unsafe path: {member.name}")
+            archive.extractall(incoming, filter="data")
+        if target.exists():
+            shutil.rmtree(target)
+        os.replace(incoming, target)
+    except (OSError, tarfile.TarError) as exc:
+        shutil.rmtree(incoming, ignore_errors=True)
+        raise InstallError(f"cannot unpack the engine into {target}: {exc}") from None
     return target
 
 
