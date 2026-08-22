@@ -150,6 +150,16 @@ class Sim:
         self._work = Path(tempfile.mkdtemp(prefix="simantic-session-"))
         self._base = Path(cwd) if cwd else Path.cwd()
 
+        # Argument errors are the caller's and must not depend on an engine
+        # being present.
+        if scenario is not None:
+            if elf is not None or repl is not None or mcu is not None:
+                raise ValueError("scenario= is exclusive with elf=/repl=/mcu=")
+            if not (scenario.get("machines") or {}):
+                raise ValueError("scenario needs at least one machine")
+        elif elf is None or (repl is None) == (mcu is None):
+            raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
+
         ns = load(engine_dir)
         spec = ns.SessionSpec()
         spec.TraceInterrupts = trace_interrupts
@@ -158,12 +168,8 @@ class Sim:
             spec.TraceSymbols.Add(s)
 
         if scenario is not None:
-            if elf is not None or repl is not None or mcu is not None:
-                raise ValueError("scenario= is exclusive with elf=/repl=/mcu=")
             self._fill_scenario(spec, scenario)
         else:
-            if elf is None or (repl is None) == (mcu is None):
-                raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
             self._add_machine(spec, "machine", repl, mcu, overlay, elf)
 
         telemetry.record("sdk.session")

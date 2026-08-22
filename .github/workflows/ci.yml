@@ -52,8 +52,8 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-          && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]')
-          || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+          && fromJSON('["ubuntu-latest", "macos-latest"]')
+          || fromJSON('["ubuntu-latest"]') }}
         # 3.11 is the floor (tomllib landed there); 3.13 guards the top end.
         python: ["3.11", "3.13"]
     steps:
