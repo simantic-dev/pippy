@@ -20,7 +20,7 @@ from simantic import Sim
 # a platform file you supply
 Sim(elf="fw.elf", repl="board.repl", uart="usart2")
 
-# a model name, resolved from the local model library ($SIMANTIC_MCU_LIB)
+# a model name: ~/.sim_cache, else fetched with your credentials and cached (like `sim --mcu`)
 Sim(elf="fw.elf", mcu="STM32F401RE", overlay="overlay.repl-frag", uart="usart2")
 
 # a scenario dict — the sim --scenario schema as Python

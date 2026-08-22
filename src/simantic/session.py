@@ -26,9 +26,11 @@ one place to use it, a plain script or a process pool is another.
         assert sim.expect("CONNACK verified", timeout=60).virtual_seconds < 5
 
 Platforms: `repl=` is a platform file you supply (.replx templates are
-rendered for you); `mcu=` names a model resolved from the local model library
-(`$SIMANTIC_MCU_LIB`), optionally with an `overlay=` fragment. Scenario
-machines accept the same keys.
+rendered for you); `mcu=` names a model, resolved exactly like `sim --mcu` —
+from `~/.sim_cache`, else fetched with your stored credentials and cached —
+optionally with an `overlay=` fragment. Scenario machines accept the same
+keys. (`$SIMANTIC_MCU_LIB` switches `mcu=` to a local model library for
+model development.)
 
 The engine is `Simantic.Core`, hosted in-process (see `engine.py`); this
 class adds vocabulary, not semantics.
@@ -44,7 +46,7 @@ from typing import Any
 
 from . import telemetry
 from .engine import load
-from .fixtures import MCU_LIB_ENV, ModelLibraryUnavailable, platform_path
+from .fixtures import MCU_LIB_ENV, platform_path
 from .mcu import SimError
 
 
@@ -146,8 +148,7 @@ class Sim:
         else:
             if elf is None or (repl is None) == (mcu is None):
                 raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
-            platform = self._platform(repl, mcu, overlay)
-            spec.AddMachine("machine", str(platform), str(self._base / elf))
+            self._add_machine(spec, "machine", repl, mcu, overlay, elf)
 
         telemetry.record("sdk.session")
         try:
@@ -158,15 +159,22 @@ class Sim:
 
     # -- platform / scenario preparation -----------------------------------
 
-    def _platform(self, repl, mcu, overlay) -> Path:
+    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf) -> None:
+        """Platform file → AddMachine; model name → the local model library when
+        $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
+        (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
+        elf_path = str(self._base / elf)
         if repl is not None:
             if overlay is not None:
                 raise ValueError("overlay= applies to mcu=, not repl=")
-            return self._base / repl
-        if not os.environ.get(MCU_LIB_ENV):
-            raise ModelLibraryUnavailable(
-                f"mcu= needs a local model library: set ${MCU_LIB_ENV} (or pass repl=)")
-        return platform_path(mcu, self._base / overlay if overlay else None, self._work)
+            spec.AddMachine(name, str(self._base / repl), elf_path)
+            return
+        if os.environ.get(MCU_LIB_ENV):
+            platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
+            spec.AddMachine(name, str(platform), elf_path)
+            return
+        fragment = (self._base / overlay).read_text() if overlay else None
+        spec.AddModel(name, mcu, elf_path, fragment)
 
     def _fill_scenario(self, spec, scenario: dict[str, Any]) -> None:
         machines = scenario.get("machines") or {}
@@ -175,8 +183,7 @@ class Sim:
         for name, m in machines.items():
             if "elf" not in m or ("repl" in m) == ("mcu" in m):
                 raise ValueError(f"machine {name!r} needs elf and exactly one of repl/mcu")
-            platform = self._platform(m.get("repl"), m.get("mcu"), m.get("overlay"))
-            spec.AddMachine(name, str(platform), str(self._base / m["elf"]))
+            self._add_machine(spec, name, m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"])
         for med in scenario.get("media") or []:
             sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
             sm.Strict = bool(med.get("strict", False))
