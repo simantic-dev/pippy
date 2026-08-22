@@ -30,6 +30,7 @@ from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
 from .pyrite import pyrite_binary
 from .pyrite import run as run_pyrite
+from .session import ExpectTimeout, Match, Sim
 from .report import (
     Expect,
     Finding,
@@ -68,6 +69,10 @@ __all__ = [
     "run_firmware",
     "run_pyrite",
     "sim_binary",
+    # scripted sessions (sim --control-stdio)
+    "Sim",
+    "Match",
+    "ExpectTimeout",
     # agent sessions
     "Session",
     "SessionError",

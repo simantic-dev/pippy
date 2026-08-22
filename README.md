@@ -44,6 +44,27 @@ at them, or put them on PATH — both take precedence over a managed install.
 `simantic status` shows what is authenticated and which binary each name
 resolves to.
 
+## Scripted sessions
+
+For anything beyond "run it and grep the UART" — stepping virtual time,
+typing into a console, pressing a button, reading memory, asserting on when
+something happened — drive a live simulation from Python:
+
+```python
+from simantic import Sim
+
+with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
+    sim.expect("ready")
+    sim.inject_gpio("gpioc", 13, True)      # press the user button
+    m = sim.expect("button pressed")
+    assert m.virtual_seconds < 0.010        # within 10 virtual ms
+    assert sim.read_u32("press_count") == 1
+```
+
+The same class runs multi-machine scenarios with scripted peers
+(`Sim(scenario={...})`). Time advances only when asked, so tests are
+deterministic. See [docs/session-api.md](docs/session-api.md).
+
 ## pytest plugin
 
 Installing the package registers two collectors. The manifests your project
