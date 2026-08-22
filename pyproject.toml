@@ -6,8 +6,8 @@ build-backend = "hatchling.build"
 name = "simantic"
 version = "0.1.0"
 description = "Python SDK and pytest plugin for the Simantic circuit and firmware simulators"
-# PyYAML reads sim-fixtures test.yaml manifests. Everything else is stdlib
-# (tomllib, json, subprocess), so this is the package's only dependency.
+# PyYAML reads sim-fixtures test.yaml manifests; pythonnet hosts the
+# simulation engine (Simantic.Core, .NET) in-process for `simantic.Sim`.
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -22,7 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
-dependencies = ["pyyaml>=6"]
+dependencies = ["pyyaml>=6", "pythonnet>=3.0.5"]
 
 [project.urls]
 Homepage = "https://simantic.dev"

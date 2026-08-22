@@ -1,55 +1,51 @@
 """Drive a live simulation from Python, step by step.
 
-`Sim` controls one emulation: it advances virtual time only on request and
-otherwise observes without perturbing, so a script replays the same
-firmware behaviour every run and Python think-time costs nothing. It is the
-programmatic face of everything `sim` can do; pytest is one place to use it.
-Single machines and multi-machine scenarios (shared clock, CAN/BLE/Ethernet
-media, scripted network peers) use the same class.
+`Sim` controls one emulation hosted in this process: it advances virtual
+time only on request and otherwise observes without perturbing, so a script
+replays the same firmware behaviour every run and Python think-time costs
+nothing. It is the programmatic face of everything `sim` can do; pytest is
+one place to use it, a plain script or a process pool is another.
 
     from simantic import Sim
 
     with Sim(elf="fw.elf", repl="board.repl", uart="uart0") as sim:
-            sim.expect(">>> ")                 # run until the prompt, then hold
-            sim.send("print(6*7)")             # delivered when time next advances
-            sim.expect(r"42\\r?\\n>>> ")        # run until answered
-            sim.run_for(0.5)                   # advance exactly 500 virtual ms
-            assert "Traceback" not in sim.read_uart()
+        sim.expect(">>> ")                 # run until the prompt, then hold
+        sim.send("print(6*7)")             # delivered when time next advances
+        sim.expect(r"42\\r?\\n>>> ")        # run until answered
+        sim.run_for(0.5)                   # advance exactly 500 virtual ms
+        assert "Traceback" not in sim.read_uart()
 
-    def test_mqtt_over_lte():
-        scenario = {
-            "machines": {"c6": {"mcu": "ESP32-C6", "elf": "image.elf"}},
-            "networkServices": [{"name": "broker", "host": "192.0.2.1", "port": 1883,
-                                 "type": "Antmicro.Renode.Peripherals.Network.ScriptedNetworkService",
-                                 "args": "mqtt_broker.py"}],
-            "quantum": 0.00001,
-        }
-        with Sim(scenario=scenario, machine="c6", uart="uart0") as sim:
-            m = sim.expect("CONNACK verified", timeout=60)
-            assert m.virtual_seconds < 5
+    scenario = {
+        "machines": {"c6": {"mcu": "ESP32-C6", "elf": "image.elf"}},
+        "networkServices": [{"name": "broker", "host": "192.0.2.1", "port": 1883,
+                             "type": "Antmicro.Renode.Peripherals.Network.ScriptedNetworkService",
+                             "args": "mqtt_broker.py"}],
+        "quantum": 0.00001,
+    }
+    with Sim(scenario=scenario, machine="c6", uart="uart0") as sim:
+        assert sim.expect("CONNACK verified", timeout=60).virtual_seconds < 5
 
-Platforms: `repl=` is a platform file you supply; `mcu=` names a model, resolved
-from the local model library when `$SIMANTIC_MCU_LIB` is set and otherwise
-fetched by `sim` itself (needs `sim auth`). Scenario machines accept the same
-two keys (`repl` / `mcu`, plus `overlay`).
+Platforms: `repl=` is a platform file you supply (.replx templates are
+rendered for you); `mcu=` names a model resolved from the local model library
+(`$SIMANTIC_MCU_LIB`), optionally with an `overlay=` fragment. Scenario
+machines accept the same keys.
 
-The wire protocol is owned by `sim` (see its `--control-stdio` help); this
-module is the typed face of it and adds nothing the engine does not do.
+The engine is `Simantic.Core`, hosted in-process (see `engine.py`); this
+class adds vocabulary, not semantics.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from . import telemetry
-from .fixtures import MCU_LIB_ENV, platform_path
-from .mcu import SimError, sim_binary
+from .engine import load
+from .fixtures import MCU_LIB_ENV, ModelLibraryUnavailable, platform_path
+from .mcu import SimError
 
 
 class ExpectTimeout(AssertionError):
@@ -66,7 +62,7 @@ class ExpectTimeout(AssertionError):
 
 
 class Match:
-    """A successful expect: the matched window and the virtual time of the match."""
+    """A successful expect: the matched text and the virtual time of the match."""
 
     def __init__(self, text: str, virtual_seconds: float):
         self.text = text
@@ -79,6 +75,34 @@ class Match:
         return f"Match(t={self.virtual_seconds:.6f}, text={self.text!r})"
 
 
+def _bytes(net_bytes) -> bytes:
+    return bytes(bytearray(net_bytes)) if net_bytes is not None else b""
+
+
+def _uart(r) -> dict:
+    return {"t": r.T, "machine": r.Machine, "label": r.Label, "text": r.Text}
+
+
+def _frame(r) -> dict:
+    return {"t": r.T, "machine": r.Machine, "label": r.Label, "protocol": r.Protocol,
+            "direction": r.Direction, "summary": r.Summary, "id": r.Id,
+            "data": _bytes(r.Data) if r.Data is not None else None}
+
+
+def _log(r) -> dict:
+    return {"t": r.T, "level": r.Level, "source": r.Source, "message": r.Message}
+
+
+def _interrupt(r) -> dict:
+    return {"t": r.T, "machine": r.Machine, "direction": r.Direction,
+            "exception": int(r.ExceptionIndex), "name": r.Name}
+
+
+def _symbol_trace(r) -> dict:
+    return {"t": r.T, "machine": r.Machine, "symbol": r.Symbol, "address": int(r.Address),
+            "args": [{"register": a.Register, "value": int(a.Value), "symbol": a.Symbol} for a in r.Args]}
+
+
 class Sim:
     """One live simulation, driven from Python. Use as a context manager."""
 
@@ -89,80 +113,86 @@ class Sim:
         repl: str | os.PathLike[str] | None = None,
         mcu: str | None = None,
         overlay: str | os.PathLike[str] | None = None,
-        scenario: dict[str, Any] | str | os.PathLike[str] | None = None,
+        scenario: dict[str, Any] | None = None,
         machine: str | None = None,
         uart: str = "uart0",
-        sim_args: list[str] = (),
-        binary: str | os.PathLike[str] | None = None,
+        trace_symbols: list[str] = (),
+        trace_interrupts: bool = False,
+        show_logs: bool = False,
         cwd: str | os.PathLike[str] | None = None,
+        engine_dir: str | os.PathLike[str] | None = None,
     ):
         self.machine = machine
         self.uart = uart
-        self._seq = 0
-        self._cursors = {"read_uart": 0, "read_frames": 0, "read_logs": 0}
+        self._cursors = {"uart": 0, "frames": 0, "logs": 0, "interrupts": 0, "symbol_trace": 0}
         # pexpect-style stream: text the firmware printed but no expect() has
         # consumed yet, so sequential expects never miss output that arrived
         # in a previous call's overshoot.
         self._pending: list[tuple[float, str]] = []
         self._work = Path(tempfile.mkdtemp(prefix="simantic-session-"))
-        self._base_dir = Path(cwd) if cwd else Path.cwd()
+        self._base = Path(cwd) if cwd else Path.cwd()
 
-        cmd = [str(sim_binary(binary)), "--control-stdio",
-               "--output", str(self._work / "uart.txt"), "--ascii", "--only-messages"]
+        ns = load(engine_dir)
+        spec = ns.SessionSpec()
+        spec.TraceInterrupts = trace_interrupts
+        spec.ShowBackendLogs = show_logs
+        for s in trace_symbols:
+            spec.TraceSymbols.Add(s)
+
         if scenario is not None:
             if elf is not None or repl is not None or mcu is not None:
                 raise ValueError("scenario= is exclusive with elf=/repl=/mcu=")
-            cmd += ["--scenario", str(self._scenario_file(scenario))]
+            self._fill_scenario(spec, scenario)
         else:
             if elf is None or (repl is None) == (mcu is None):
                 raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
-            cmd += ["--elf", str(elf)]
-            cmd += self._platform_args(repl, mcu, overlay)
-        cmd += list(sim_args)
+            platform = self._platform(repl, mcu, overlay)
+            spec.AddMachine("machine", str(platform), str(self._base / elf))
 
         telemetry.record("sdk.session")
-        self._proc = subprocess.Popen(
-            cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-        )
-        ready = self._read_reply(None)
-        if not ready.get("ready"):
-            raise SimError(f"sim did not become ready: {ready}")
-        self.machines: list[str] = ready["machines"]
-        if self.machine is None and len(self.machines) == 1:
-            self.machine = None  # a single machine needs no name on the wire
+        try:
+            self._session = ns.Session.Start(spec)
+        except Exception as exc:  # .NET exceptions surface as Python exceptions
+            raise SimError(f"could not start the simulation: {exc}") from None
+        self.machines: list[str] = list(self._session.Machines)
 
     # -- platform / scenario preparation -----------------------------------
 
-    def _platform_args(self, repl, mcu, overlay) -> list[str]:
+    def _platform(self, repl, mcu, overlay) -> Path:
         if repl is not None:
             if overlay is not None:
                 raise ValueError("overlay= applies to mcu=, not repl=")
-            return ["--repl", str(repl)]
-        if os.environ.get(MCU_LIB_ENV):
-            return ["--repl", str(platform_path(
-                mcu, Path(overlay) if overlay else None, self._work))]
-        if overlay is not None:
-            raise ValueError(f"overlay= needs a local model library (${MCU_LIB_ENV})")
-        return ["--mcu", mcu]
+            return self._base / repl
+        if not os.environ.get(MCU_LIB_ENV):
+            raise ModelLibraryUnavailable(
+                f"mcu= needs a local model library: set ${MCU_LIB_ENV} (or pass repl=)")
+        return platform_path(mcu, self._base / overlay if overlay else None, self._work)
 
-    def _scenario_file(self, scenario) -> Path:
-        if not isinstance(scenario, dict):
-            return Path(scenario)
-        import yaml  # the package's one dependency; imported lazily like fixtures.py
+    def _fill_scenario(self, spec, scenario: dict[str, Any]) -> None:
+        machines = scenario.get("machines") or {}
+        if not machines:
+            raise ValueError("scenario needs at least one machine")
+        for name, m in machines.items():
+            if "elf" not in m or ("repl" in m) == ("mcu" in m):
+                raise ValueError(f"machine {name!r} needs elf and exactly one of repl/mcu")
+            platform = self._platform(m.get("repl"), m.get("mcu"), m.get("overlay"))
+            spec.AddMachine(name, str(platform), str(self._base / m["elf"]))
+        for med in scenario.get("media") or []:
+            sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
+            sm.Strict = bool(med.get("strict", False))
+            if med.get("hostBridge"):
+                sm.HostBridge = med["hostBridge"]
+        for svc in scenario.get("networkServices") or []:
+            spec.AddService(svc["name"], svc["host"], int(svc.get("port", 0)),
+                            svc.get("type", "Antmicro.Renode.Peripherals.Network.EchoService"),
+                            self._service_args(svc.get("args", "")))
+        if scenario.get("quantum") is not None:
+            spec.QuantumSeconds = float(scenario["quantum"])
 
-        spec = json.loads(json.dumps(scenario))  # deep copy, plain types only
-        for name, m in spec.get("machines", {}).items():
-            if "mcu" in m and os.environ.get(MCU_LIB_ENV):
-                overlay = m.pop("overlay", None)
-                m["repl"] = str(platform_path(
-                    m.pop("mcu"), self._base_dir / overlay if overlay else None, self._work))
-            for key in ("repl", "elf"):
-                if key in m:
-                    m[key] = str(self._base_dir / m[key])
-        path = self._work / "scenario.yaml"
-        path.write_text(yaml.safe_dump(spec, sort_keys=False))
-        return path
+    def _service_args(self, args: str) -> str:
+        # A script path is the common case; make it absolute against cwd=.
+        p = self._base / args
+        return str(p) if args and p.exists() else args
 
     # -- stimulus -----------------------------------------------------------
 
@@ -170,38 +200,36 @@ class Sim:
              machine: str | None = None) -> None:
         """Type into the UART. While paused (the normal state between calls)
         the bytes are delivered at the start of the next expect/run_for."""
-        self._call("send", text=text + line_ending, uart=uart or self.uart,
-                   machine=machine or self.machine)
+        self.send_bytes((text + line_ending).encode("latin-1"), uart, machine)
 
     def send_bytes(self, data: bytes, uart: str | None = None, machine: str | None = None) -> None:
-        self._call("send", hex=data.hex(), uart=uart or self.uart, machine=machine or self.machine)
+        self._session.Send(bytes(data), uart or self.uart, machine or self.machine)
 
     def inject_gpio(self, peripheral: str, pin: int, state: bool, machine: str | None = None) -> None:
         """Drive an external GPIO input line (a button press/release)."""
-        self._call("gpio", peripheral=peripheral, pin=pin, state=state,
-                   machine=machine or self.machine)
+        self._session.InjectGpio(peripheral, pin, state, machine or self.machine)
 
     def inject_can(self, peripheral: str, can_id: int, data: bytes, *, extended: bool = False,
                    remote: bool = False, fd: bool = False, brs: bool = False,
                    machine: str | None = None) -> None:
         """Put a CAN frame on the bus as seen by `peripheral`."""
-        self._call("can", peripheral=peripheral, can_id=can_id, hex=data.hex(), extended=extended,
-                   remote=remote, fd=fd, brs=brs, machine=machine or self.machine)
+        self._session.InjectCan(peripheral, can_id, bytes(data), extended, remote, fd, brs,
+                                machine or self.machine)
 
     def inject_radio(self, peripheral: str, frame: bytes, machine: str | None = None) -> None:
         """Deliver a raw radio frame to a radio peripheral."""
-        self._call("radio", peripheral=peripheral, hex=frame.hex(), machine=machine or self.machine)
+        self._session.InjectRadio(peripheral, bytes(frame), machine or self.machine)
 
     # -- time control -------------------------------------------------------
 
     def run_for(self, virtual_seconds: float) -> float:
         """Advance exactly this much virtual time, then hold. Returns elapsed virtual time."""
-        return self._call("run_for", seconds=virtual_seconds)["t"]
+        return self._await(self._session.RunForAsync(float(virtual_seconds)))
 
     @property
     def time(self) -> float:
         """Elapsed virtual time in seconds."""
-        return self._call("time")["t"]
+        return self._session.VirtualTime
 
     def expect(self, pattern: str, timeout: float = 30, uart: str | None = None,
                machine: str | None = None) -> Match:
@@ -221,13 +249,11 @@ class Sim:
             self._consume(m.end())
             return Match(m.group(0), t)
 
-        r = self._call("expect", pattern=pattern, uart=uart or self.uart, timeout=timeout,
-                       machine=machine or self.machine)
-        if not r["matched"]:
-            raise ExpectTimeout(pattern, text + r["text"], r["t"])
-        # The engine reports the window it matched in; hand back just the match.
-        live = rx.search(r["text"])
-        matched_text = live.group(0) if live else r["text"]
+        r = self._await(self._session.ExpectAsync(pattern, uart or self.uart, machine or self.machine, float(timeout)))
+        if not r.Matched:
+            raise ExpectTimeout(pattern, text + r.Text, r.VirtualSeconds)
+        live = rx.search(r.Text)
+        matched_text = live.group(0) if live else r.Text
         # Consume the stream through the live match and no further, so lines
         # printed in the overshoot stay buffered for the next expect.
         self._drain_pending()
@@ -239,59 +265,68 @@ class Sim:
             idx = text.rfind(matched_text)
             if idx >= 0:
                 self._consume(idx + len(matched_text))
-        return Match(matched_text, r["t"])
+        return Match(matched_text, r.VirtualSeconds)
 
-    # -- observation --------------------------------------------------------
+    # -- observation (never advances time) ----------------------------------
 
     def read_uart(self, from_start: bool = False) -> str:
         """Everything the firmware printed since the last read (or ever)."""
-        recs = self._records("read_uart", from_start)
+        recs = self.uart_records(from_start)
         self._pending.clear()
         return "".join(r["text"] for r in recs)
 
     def uart_records(self, from_start: bool = False) -> list[dict]:
         """Timestamped UART records: {t, machine, label, text}."""
-        return self._records("read_uart", from_start)
+        return self._records("uart", self._session.ReadUart, _uart, from_start)
 
     def frames(self, from_start: bool = False) -> list[dict]:
         """Captured bus frames (CAN/SPI/I2C/BLE/Ethernet) since the last call."""
-        return self._records("read_frames", from_start)
+        return self._records("frames", self._session.ReadFrames, _frame, from_start)
 
     def logs(self, from_start: bool = False) -> list[dict]:
         """Simulator-side logs — unhandled registers, model warnings."""
-        return self._records("read_logs", from_start)
+        return self._records("logs", self._session.ReadLogs, _log, from_start)
+
+    def interrupts(self, from_start: bool = False) -> list[dict]:
+        """Interrupt entry/exit records (needs trace_interrupts=True)."""
+        return self._records("interrupts", self._session.ReadInterrupts, _interrupt, from_start)
+
+    def symbol_trace(self, from_start: bool = False) -> list[dict]:
+        """Hits on trace_symbols= with their argument registers (non-halting)."""
+        return self._records("symbol_trace", self._session.ReadSymbolTrace, _symbol_trace, from_start)
 
     def read_memory(self, address: int | str, count: int = 4, machine: str | None = None) -> bytes:
         """Read bytes from the system bus; `address` is an int or a symbol name."""
-        kw = {"symbol": address} if isinstance(address, str) else {"address": hex(address)}
-        return bytes.fromhex(self._call("read_memory", count=count, machine=machine or self.machine, **kw)["hex"])
+        if isinstance(address, str):
+            address = self.symbol(address, machine)
+        return _bytes(self._session.ReadMemory(int(address), int(count), machine or self.machine))
 
     def read_u32(self, address: int | str, machine: str | None = None) -> int:
         return int.from_bytes(self.read_memory(address, 4, machine), "little")
 
     def symbol(self, name: str, machine: str | None = None) -> int:
         """Address of an ELF symbol."""
-        return self._call("symbol", name=name, machine=machine or self.machine)["address"]
+        return int(self._session.ResolveSymbol(name, machine or self.machine))
 
     def threads(self, machine: str | None = None) -> dict | None:
         """RTOS thread snapshot (Zephyr/FreeRTOS) or None when not recognised."""
-        return self._call("threads", machine=machine or self.machine)["value"]
+        snap = self._session.Threads(machine or self.machine)
+        if snap is None:
+            return None
+        return {"rtos": snap.Rtos, "truncated": snap.Truncated,
+                "threads": [{k: getattr(t, k) for k in ("Name", "State", "Priority") if hasattr(t, k)}
+                            for t in snap.Threads]}
 
-    def heap(self, machine: str | None = None) -> dict | None:
-        return self._call("heap", machine=machine or self.machine)["value"]
+    def heap(self, machine: str | None = None):
+        """Heap report (engine object) or None when not recognised."""
+        return self._session.Heap(machine or self.machine)
 
     # -- lifecycle ----------------------------------------------------------
 
     def close(self) -> None:
-        if self._proc.poll() is None:
-            try:
-                self._call("stop")
-            except SimError:
-                pass
-            try:
-                self._proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
+        if getattr(self, "_session", None) is not None:
+            self._session.Dispose()
+            self._session = None
 
     def __enter__(self) -> "Sim":
         return self
@@ -301,20 +336,32 @@ class Sim:
 
     # -- internals ----------------------------------------------------------
 
-    def _records(self, op: str, from_start: bool) -> list[dict]:
-        cursor = 0 if from_start else self._cursors[op]
+    @staticmethod
+    def _await(task):
+        """Wait for an engine task while releasing the GIL: scripted peers run
+        Python on the emulation thread and need it while the clock is running."""
+        import time
+
+        while not task.IsCompleted:
+            time.sleep(0.0005)
+        if task.IsFaulted:
+            raise SimError(str(task.Exception.GetBaseException().Message))
+        return task.Result
+
+    def _records(self, key: str, reader, convert, from_start: bool) -> list[dict]:
+        cursor = 0 if from_start else self._cursors[key]
         out: list[dict] = []
         while True:
-            r = self._call(op, cursor=cursor)
-            out.extend(r["records"])
-            cursor = r["next"]
-            if not r["truncated"]:
+            page = reader(cursor, 2000)
+            out.extend(convert(r) for r in page.Records)
+            cursor = page.Next
+            if not page.Truncated:
                 break
-        self._cursors[op] = cursor
+        self._cursors[key] = cursor
         return out
 
     def _drain_pending(self) -> None:
-        for rec in self._records("read_uart", False):
+        for rec in self.uart_records(False):
             self._pending.append((rec["t"], rec["text"]))
 
     def _time_at_offset(self, offset: int) -> float:
@@ -334,41 +381,3 @@ class Sim:
             else:
                 self._pending[0] = (t, s[offset:])
                 offset = 0
-
-    def _call(self, op: str, **args: Any) -> dict:
-        self._seq += 1
-        msg = {"id": self._seq, "op": op}
-        msg.update({k: v for k, v in args.items() if v is not None})
-        assert self._proc.stdin is not None
-        try:
-            self._proc.stdin.write(json.dumps(msg) + "\n")
-            self._proc.stdin.flush()
-        except (BrokenPipeError, OSError):
-            raise SimError(f"sim exited before '{op}':\n{self._stderr()}") from None
-        reply = self._read_reply(self._seq)
-        if not reply.get("ok"):
-            raise SimError(f"{op}: {reply.get('error', reply)}")
-        return reply
-
-    def _read_reply(self, expect_id: int | None) -> dict:
-        assert self._proc.stdout is not None
-        while True:
-            line = self._proc.stdout.readline()
-            if not line:
-                raise SimError(f"sim exited unexpectedly:\n{self._stderr()}")
-            try:
-                reply = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # simulator log line, not a reply
-            if not isinstance(reply, dict):
-                continue
-            if expect_id is None and reply.get("ready") is not None:
-                return reply
-            if reply.get("id") == expect_id:
-                return reply
-
-    def _stderr(self) -> str:
-        try:
-            return (self._proc.stderr.read() if self._proc.stderr else "")[-4000:]
-        except (OSError, ValueError):
-            return ""

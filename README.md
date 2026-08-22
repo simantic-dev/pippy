@@ -1,8 +1,8 @@
 # simantic
 
-Python control of the [Simantic](https://simantic.dev) simulators — firmware
-via `sim`, circuits via `analog-cli`. Everything the CLIs can do, as objects
-and method calls: start a board or a multi-machine scenario, advance virtual
+Python control of the [Simantic](https://simantic.dev) simulators — the
+firmware engine hosted in your process, circuits via `analog-cli`. Everything
+the CLIs can do, as objects and method calls: start a board or a multi-machine scenario, advance virtual
 time by exact amounts, inject UART/GPIO/CAN/radio, read memory and RTOS state,
 and run as many simulations in parallel as you have cores. pytest is one way
 to use it, not a requirement.
@@ -57,8 +57,9 @@ with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
 ```
 
 The same class runs multi-machine scenarios with scripted peers
-(`Sim(scenario={...})`). Each `Sim` is its own process, so a parameter sweep
-is a `ProcessPoolExecutor` over plain functions. See
+(`Sim(scenario={...})`). The engine lives in your process (one emulation per
+process), so a parameter sweep is a `ProcessPoolExecutor` over plain
+functions. See
 [docs/session-api.md](docs/session-api.md) and `examples/`.
 
 One-shot runs ("run 5 s, give me the transcript") are `run_firmware(...)`.

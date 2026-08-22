@@ -20,10 +20,10 @@ from simantic import Sim
 # a platform file you supply
 Sim(elf="fw.elf", repl="board.repl", uart="usart2")
 
-# a model name: resolved from $SIMANTIC_MCU_LIB when set, else fetched by sim (needs `sim auth`)
+# a model name, resolved from the local model library ($SIMANTIC_MCU_LIB)
 Sim(elf="fw.elf", mcu="STM32F401RE", overlay="overlay.repl-frag", uart="usart2")
 
-# a scenario: a dict (written to YAML for you) or a path to a scenario file
+# a scenario dict — the sim --scenario schema as Python
 Sim(scenario={...}, machine="c6", uart="uart0", cwd=fixture_dir)
 ```
 
@@ -32,8 +32,9 @@ Scenario dicts use the `sim --scenario` schema verbatim: `machines`
 `networkServices` (scripted peers), `quantum`. Relative paths resolve against
 `cwd=` (default: the process cwd).
 
-`sim_args=[...]` appends raw flags — `--trace-symbol`, `--trace-interrupts`,
-`--show-renode-logs` — so the non-halting instrumentation is one argument away.
+`trace_symbols=[...]`, `trace_interrupts=True` and `show_logs=True` turn on the
+non-halting instrumentation; read it back with `symbol_trace()`, `interrupts()`
+and `logs()`.
 
 ## Drive
 
@@ -58,6 +59,8 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 | `read_uart()` / `uart_records()` | text since the last read / `[{t, machine, label, text}]` |
 | `frames()` | `[{t, machine, label, protocol, direction, summary, id, data}]` — SPI/I2C/CAN/BLE/Ethernet |
 | `logs()` | `[{t, level, source, message}]` — unhandled registers, model warnings |
+| `interrupts()` | `[{t, machine, direction, exception, name}]` (with `trace_interrupts=True`) |
+| `symbol_trace()` | `[{t, machine, symbol, address, args}]` (with `trace_symbols=[...]`) |
 | `read_memory(addr_or_symbol, count)` / `read_u32(...)` | bytes / int from the system bus (RAM, flash, peripheral registers) |
 | `symbol(name)` | ELF symbol address |
 | `threads()` / `heap()` | RTOS thread snapshot / heap report, when recognised |
@@ -73,17 +76,25 @@ UART character at 115200 (86.8 µs). Set `quantum` in the scenario dict (seconds
 before asserting on intervals — an assertion at the default quantum measures
 the time resolution, not the firmware.
 
-## Wire protocol
+## How it runs
 
-One JSON object per line on `sim`'s stdin/stdout; `{"id":n,"op":...}` in,
-`{"id":n,"ok":true,...}` or `{"id":n,"ok":false,"error":"..."}` out, after an
-initial `{"ready":true,"machines":[...]}`. Non-JSON stdout lines are simulator
-logs and are skipped. The ops are exactly the methods above (`run_for`,
-`expect`, `send`, `gpio`, `can`, `radio`, `read_uart`, `read_frames`,
-`read_logs`, `read_memory`, `symbol`, `time`, `threads`, `heap`, `stop`). The
-protocol is owned by `sim`; this module adds no semantics of its own, so a
-test run exercises whatever `sim` binary it points at — a branch build
-included.
+`Sim` hosts the engine (`Simantic.Core`, .NET) inside the Python process via
+pythonnet and holds a `Session` object — the same `SessionSpec`/`Session` API
+the `sim` CLI is built on. There is no subprocess and no protocol: method
+calls are method calls, records are objects. The engine is located from
+`simantic install` / `$SIMANTIC_SIM` (the directory holding `sim` also holds
+`Simantic.Core.dll`), or `$SIMANTIC_ENGINE_DIR`.
+
+Consequences worth knowing:
+
+- **One emulation per process.** The engine keeps process-global state, so
+  run N simulations as N processes (`ProcessPoolExecutor`), never N threads.
+- **Scripted peers run in your interpreter.** A `ScriptedNetworkService` or
+  `ScriptedCellularPeer` script executes on the emulation thread of the same
+  Python process; `expect`/`run_for` release the GIL while the clock runs so
+  the peer can take it. Don't hold locks across those calls.
+- **Exceptions are engine exceptions.** A bad platform or a missing ELF
+  surfaces as `SimError` with the engine's message.
 
 ## Why not MCP
 
