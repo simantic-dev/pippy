@@ -1,15 +1,15 @@
-"""Scriptable firmware sessions: drive a live simulation step by step.
+"""Drive a live simulation from Python, step by step.
 
-`Sim` starts `sim --control-stdio` and talks to it over newline-delimited
-JSON. Between calls the emulation is paused, so Python think-time costs no
-virtual time and a script replays the same firmware behaviour every run.
+`Sim` controls one emulation: it advances virtual time only on request and
+otherwise observes without perturbing, so a script replays the same
+firmware behaviour every run and Python think-time costs nothing. It is the
+programmatic face of everything `sim` can do; pytest is one place to use it.
 Single machines and multi-machine scenarios (shared clock, CAN/BLE/Ethernet
 media, scripted network peers) use the same class.
 
     from simantic import Sim
 
-    def test_repl():
-        with Sim(elf="fw.elf", repl="board.repl", uart="uart0") as sim:
+    with Sim(elf="fw.elf", repl="board.repl", uart="uart0") as sim:
             sim.expect(">>> ")                 # run until the prompt, then hold
             sim.send("print(6*7)")             # delivered when time next advances
             sim.expect(r"42\\r?\\n>>> ")        # run until answered

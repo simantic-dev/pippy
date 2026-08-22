@@ -1,13 +1,15 @@
-"""Python SDK for the Simantic simulators.
+"""Python control of the Simantic simulators.
 
 One package covers both engines, because co-simulation puts them together:
 `analog-cli` for circuits and `sim` for firmware.
 
     import simantic
 
-    report = simantic.run_tests("hardware/psu")          # analog
+    with simantic.Sim(elf="fw.elf", repl="board.repl") as sim:   # live control
+        sim.expect("ready"); sim.run_for(0.5)
     run = simantic.run_firmware("fw.elf", repl="board.repl",
-                                expect=["RESULT: PASS"])  # firmware
+                                expect=["RESULT: PASS"])          # one-shot
+    report = simantic.run_tests("hardware/psu")                   # analog
 
 Neither binary is bundled. Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH.

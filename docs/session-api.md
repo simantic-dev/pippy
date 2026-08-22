@@ -1,6 +1,8 @@
-# Scripted sessions: `simantic.Sim`
+# Driving the engine: `simantic.Sim`
 
-`Sim` is the scriptable face of the simulator. It starts `sim --control-stdio`,
+`Sim` is the Python face of the simulator — the same capabilities as the
+`sim` CLI, as a live object. No test framework is involved; pytest, a plain
+script, a notebook or a process pool all use it the same way. It starts `sim --control-stdio`,
 which builds the machine(s) and holds them at reset; every method either
 advances virtual time by an exact, requested amount or observes state without
 advancing it. Between calls nothing runs, so a script is deterministic and

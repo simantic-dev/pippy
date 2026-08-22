@@ -1,10 +1,11 @@
 # simantic
 
-Python SDK and pytest plugin for the [Simantic](https://simantic.dev)
-simulators — circuits via `analog-cli`, firmware via `sim`.
-
-One package covers both, because co-simulation puts them together: an
-`analog-cli` testplan can already declare a `firmware` test with an `elf`.
+Python control of the [Simantic](https://simantic.dev) simulators — firmware
+via `sim`, circuits via `analog-cli`. Everything the CLIs can do, as objects
+and method calls: start a board or a multi-machine scenario, advance virtual
+time by exact amounts, inject UART/GPIO/CAN/radio, read memory and RTOS state,
+and run as many simulations in parallel as you have cores. pytest is one way
+to use it, not a requirement.
 
 > **Alpha — not stable.** Version 0.1.x. The API, the CLI surface, and the
 > report schema may change without a deprecation period, and any release may
@@ -34,21 +35,15 @@ finds them there with no further configuration. It fails closed: with no
 stored credentials it stops before any download and tells you to
 authenticate.
 
-If your shell reports `simantic: command not found`, the launcher pip
-generated is in an environment directory that is not on your PATH (most often
-on Windows). `python -m simantic ...` is equivalent and needs only an
-interpreter that can import the package.
-
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
 `simantic status` shows what is authenticated and which binary each name
 resolves to.
 
-## Scripted sessions
+## Drive a simulation
 
-For anything beyond "run it and grep the UART" — stepping virtual time,
-typing into a console, pressing a button, reading memory, asserting on when
-something happened — drive a live simulation from Python:
+A `Sim` is a live simulation you control. Time advances only when you ask, so
+a script is deterministic and your think-time is free:
 
 ```python
 from simantic import Sim
@@ -62,13 +57,17 @@ with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
 ```
 
 The same class runs multi-machine scenarios with scripted peers
-(`Sim(scenario={...})`). Time advances only when asked, so tests are
-deterministic. See [docs/session-api.md](docs/session-api.md).
+(`Sim(scenario={...})`). Each `Sim` is its own process, so a parameter sweep
+is a `ProcessPoolExecutor` over plain functions. See
+[docs/session-api.md](docs/session-api.md) and `examples/`.
 
-## pytest plugin
+One-shot runs ("run 5 s, give me the transcript") are `run_firmware(...)`.
 
-Installing the package registers two collectors. The manifests your project
-already maintains become individually addressable pytest items:
+## Using it from pytest (optional)
+
+`Sim` needs no plugin — construct it inside any test. If you also keep
+manifests, installing the package registers two collectors that turn them
+into individually addressable pytest items:
 
 - `*.sim.toml` — one item per `[[test]]` table (analog)
 - `test.yaml` — one item per fixture (firmware)
