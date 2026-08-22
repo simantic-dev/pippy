@@ -35,7 +35,7 @@ yet, which is the case before the first upload):
 |---|---|
 | PyPI project name | `simantic` |
 | Owner | `simantic-dev` |
-| Repository name | `simantic-py` |
+| Repository name | `pippy` (the GitHub repo name, not the package name) |
 | Workflow name | `ci.yml` |
 | Environment name | `pypi` |
 
