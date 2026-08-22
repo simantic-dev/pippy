@@ -36,7 +36,7 @@ BACKENDS = ("tlib", "rust")
 
 
 class SimError(RuntimeError):
-    """The sim binary failed to run at all."""
+    """The simulator could not run: a bad platform, a missing ELF, a failed start."""
 
 
 class ServerNotConfigured(SimError):

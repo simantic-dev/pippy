@@ -42,6 +42,10 @@ def test_expect_run_for_and_observers():
         assert sim.read_memory("main") == sim.read_memory(main)
         assert sim.uart_records(from_start=True)
         assert isinstance(sim.logs(), list)
+        t = sim.threads()
+        assert t is None or ({"rtos", "threads", "truncated"} <= set(t))
+        h = sim.heap()
+        assert h is None or "arenaSizeBytes" in h
 
 
 @needs_engine

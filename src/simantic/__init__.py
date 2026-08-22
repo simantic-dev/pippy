@@ -17,10 +17,12 @@ at them, or put them on PATH.
 Installing this package also registers a pytest plugin that turns the
 manifests a project already keeps — `*.sim.toml` testplans and `test.yaml`
 fixture manifests — into individually addressable pytest items.
+
+The MCP-based agent session lives in `simantic.agent` and is not re-exported
+here: `Sim` is the Python surface; MCP is an adapter for chat clients.
 """
 
 from ._locate import BinaryNotFound, analog_cli
-from .agent import Session, SessionError, ToolError
 from .analog import AnalogCliError, plan_path, plan_test_names, run_tests
 from .fixtures import (
     Manifest,
@@ -78,10 +80,6 @@ __all__ = [
     "ExpectTimeout",
     "EngineNotFound",
     "engine_dir",
-    # agent sessions
-    "Session",
-    "SessionError",
-    "ToolError",
     # shared
     "BinaryNotFound",
 ]

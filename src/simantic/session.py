@@ -100,6 +100,22 @@ def _interrupt(r) -> dict:
             "exception": int(r.ExceptionIndex), "name": r.Name}
 
 
+def _as_dict(net_obj) -> dict | None:
+    """An engine record as plain Python (camelCase keys), via the engine's own JSON."""
+    if net_obj is None:
+        return None
+    import json
+
+    import clr  # type: ignore[import-not-found]
+
+    clr.AddReference("System.Text.Json")
+    from System.Text.Json import JsonNamingPolicy, JsonSerializer, JsonSerializerOptions  # type: ignore[import-not-found]
+
+    opts = JsonSerializerOptions()
+    opts.PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    return json.loads(JsonSerializer.Serialize(net_obj, net_obj.GetType(), opts))
+
+
 def _symbol_trace(r) -> dict:
     return {"t": r.T, "machine": r.Machine, "symbol": r.Symbol, "address": int(r.Address),
             "args": [{"register": a.Register, "value": int(a.Value), "symbol": a.Symbol} for a in r.Args]}
@@ -316,17 +332,14 @@ class Sim:
         return int(self._session.ResolveSymbol(name, machine or self.machine))
 
     def threads(self, machine: str | None = None) -> dict | None:
-        """RTOS thread snapshot (Zephyr/FreeRTOS) or None when not recognised."""
-        snap = self._session.Threads(machine or self.machine)
-        if snap is None:
-            return None
-        return {"rtos": snap.Rtos, "truncated": snap.Truncated,
-                "threads": [{k: getattr(t, k) for k in ("Name", "State", "Priority") if hasattr(t, k)}
-                            for t in snap.Threads]}
+        """RTOS thread snapshot, e.g. {"rtos": "Zephyr", "threads": [{"name", "state",
+        "priority", ...}], "truncated": False}; None when no RTOS is recognised."""
+        return _as_dict(self._session.Threads(machine or self.machine))
 
-    def heap(self, machine: str | None = None):
-        """Heap report (engine object) or None when not recognised."""
-        return self._session.Heap(machine or self.machine)
+    def heap(self, machine: str | None = None) -> dict | None:
+        """Heap report, e.g. {"arenaStart", "arenaSizeBytes", "usedBytes", "freeBytes",
+        "largestFreeBlockBytes", "fragmentationRatio", ...}; None when not recognised."""
+        return _as_dict(self._session.Heap(machine or self.machine))
 
     # -- lifecycle ----------------------------------------------------------
 
