@@ -81,9 +81,12 @@ the time resolution, not the firmware.
 `Sim` hosts the engine (`Simantic.Core`, .NET) inside the Python process via
 pythonnet and holds a `Session` object — the same `SessionSpec`/`Session` API
 the `sim` CLI is built on. There is no subprocess and no protocol: method
-calls are method calls, records are objects. The engine is located from
-`simantic install` / `$SIMANTIC_SIM` (the directory holding `sim` also holds
-`Simantic.Core.dll`), or `$SIMANTIC_ENGINE_DIR`.
+calls are method calls, records are objects. The engine is located in this
+order: `$SIMANTIC_ENGINE_DIR`; a development `sim` publish directory
+(`$SIMANTIC_SIM`); the managed install under `~/.simantic/engine/<version>/`
+— and if none exists and credentials are stored, it is fetched on the spot.
+The managed engine bundles its own .NET runtime, so a machine needs only
+Python.
 
 Consequences worth knowing:
 

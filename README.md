@@ -19,8 +19,14 @@ to use it, not a requirement.
 ```bash
 pip install simantic
 simantic auth              # required: authenticates against your account
-simantic install           # fetch the simulator binaries
 ```
+
+That is the whole setup for Python. The first `Sim(...)` fetches the
+simulation engine (Simantic.Core plus a private .NET runtime — nothing else
+to install) into `~/.simantic/engine/<version>/`, verified against the
+release manifest, through the same authenticated gate the CLIs use.
+`simantic install` fetches it up front, along with the `sim` and
+`analog-cli` binaries if you also want the command-line tools.
 
 `simantic auth` opens a browser tab to sign in — like `gh auth login` — and
 stores the resulting token in `~/.sim_id`, the same file the CLIs use, so one
@@ -29,11 +35,10 @@ login covers all of them. In a script or CI, pass `--token` or pipe one in
 on the dashboard's `/account/api` page. `--no-browser` falls back to an
 interactive prompt for a pasted token.
 
-`simantic install` then downloads the binaries into `~/.simantic/bin`,
-verifying each against the checksum in the release manifest, and the SDK
-finds them there with no further configuration. It fails closed: with no
-stored credentials it stops before any download and tells you to
-authenticate.
+Every download — engine or binary — is verified against the checksum in the
+release manifest and fails closed: with no stored credentials nothing is
+fetched and the error says to authenticate. The package on PyPI contains
+only Python; the simulators are never in the wheel.
 
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
