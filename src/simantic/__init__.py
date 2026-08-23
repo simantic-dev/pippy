@@ -25,10 +25,11 @@ from .fixtures import (
 )
 from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
-from .engine import EngineNotFound, engine_dir
-from .session import ExpectTimeout, Match, Sim
+from .engine import EngineNotFound, engine_dir, rust_engine_dir
+from .session import BACKENDS, ExpectTimeout, Match, Sim
+from ._rust import NotSupported
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
     # firmware
@@ -46,7 +47,10 @@ __all__ = [
     "Match",
     "ExpectTimeout",
     "EngineNotFound",
+    "NotSupported",
+    "BACKENDS",
     "engine_dir",
+    "rust_engine_dir",
     # shared
     "BinaryNotFound",
 ]

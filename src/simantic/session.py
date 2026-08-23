@@ -32,8 +32,12 @@ optionally with an `overlay=` fragment. Scenario machines accept the same
 keys. (`$SIMANTIC_MCU_LIB` switches `mcu=` to a local model library for
 model development.)
 
-The engine is `Simantic.Core`, hosted in-process (see `engine.py`); this
-class adds vocabulary, not semantics.
+`backend=` picks the engine, both hosted in-process: `"renode"` (the
+default; `Simantic.Core`, see `engine.py`) or `"rust"` (`simantic_rust`, the
+pure-Rust engine — one machine, faster, and missing some capabilities that
+raise `NotSupported` rather than silently no-op; simantic-core#183 is the
+table). A script written against one runs unchanged on the other wherever
+both tick. This class adds vocabulary, not semantics.
 """
 
 from __future__ import annotations
@@ -48,6 +52,8 @@ from . import telemetry
 from .engine import load
 from .fixtures import MCU_LIB_ENV, platform_path
 from .mcu import SimError
+
+BACKENDS = ("renode", "rust")
 
 
 class ExpectTimeout(AssertionError):
@@ -139,7 +145,11 @@ class Sim:
         show_logs: bool = False,
         cwd: str | os.PathLike[str] | None = None,
         engine_dir: str | os.PathLike[str] | None = None,
+        backend: str = "renode",
     ):
+        if backend not in BACKENDS:
+            raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
+        self.backend = backend
         self.machine = machine
         self.uart = uart
         self._cursors = {"uart": 0, "frames": 0, "logs": 0, "interrupts": 0, "symbol_trace": 0}
@@ -160,68 +170,32 @@ class Sim:
         elif elf is None or (repl is None) == (mcu is None):
             raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
 
-        ns = load(engine_dir)
-        spec = ns.SessionSpec()
-        spec.TraceInterrupts = trace_interrupts
-        spec.ShowBackendLogs = show_logs
-        for s in trace_symbols:
-            spec.TraceSymbols.Add(s)
-
         if scenario is not None:
-            self._fill_scenario(spec, scenario)
+            machines = [dict(name=name, **m) for name, m in scenario["machines"].items()]
+            for m in machines:
+                if "elf" not in m or ("repl" in m) == ("mcu" in m):
+                    raise ValueError(f"machine {m['name']!r} needs elf and exactly one of repl/mcu")
         else:
-            self._add_machine(spec, "machine", repl, mcu, overlay, elf)
+            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "overlay": overlay}]
+        scenario = scenario or {}
 
-        telemetry.record("sdk.session")
-        try:
-            self._session = ns.Session.Start(spec)
-        except Exception as exc:  # .NET exceptions surface as Python exceptions
-            raise SimError(f"could not start the simulation: {exc}") from None
-        self.machines: list[str] = list(self._session.Machines)
+        telemetry.record(f"sdk.session.{backend}")
+        if backend == "rust":
+            from ._rust import RustBackend
 
-    # -- platform / scenario preparation -----------------------------------
-
-    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf) -> None:
-        """Platform file → AddMachine; model name → the local model library when
-        $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
-        (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
-        elf_path = str(self._base / elf)
-        if repl is not None:
-            if overlay is not None:
-                raise ValueError("overlay= applies to mcu=, not repl=")
-            spec.AddMachine(name, str(self._base / repl), elf_path)
-            return
-        if os.environ.get(MCU_LIB_ENV):
-            platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
-            spec.AddMachine(name, str(platform), elf_path)
-            return
-        fragment = (self._base / overlay).read_text() if overlay else None
-        spec.AddModel(name, mcu, elf_path, fragment)
-
-    def _fill_scenario(self, spec, scenario: dict[str, Any]) -> None:
-        machines = scenario.get("machines") or {}
-        if not machines:
-            raise ValueError("scenario needs at least one machine")
-        for name, m in machines.items():
-            if "elf" not in m or ("repl" in m) == ("mcu" in m):
-                raise ValueError(f"machine {name!r} needs elf and exactly one of repl/mcu")
-            self._add_machine(spec, name, m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"])
-        for med in scenario.get("media") or []:
-            sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
-            sm.Strict = bool(med.get("strict", False))
-            if med.get("hostBridge"):
-                sm.HostBridge = med["hostBridge"]
-        for svc in scenario.get("networkServices") or []:
-            spec.AddService(svc["name"], svc["host"], int(svc.get("port", 0)),
-                            svc.get("type", "Antmicro.Renode.Peripherals.Network.EchoService"),
-                            self._service_args(svc.get("args", "")))
-        if scenario.get("quantum") is not None:
-            spec.QuantumSeconds = float(scenario["quantum"])
-
-    def _service_args(self, args: str) -> str:
-        # A script path is the common case; make it absolute against cwd=.
-        p = self._base / args
-        return str(p) if args and p.exists() else args
+            self._b = RustBackend(
+                machines, base=self._base, media=scenario.get("media"),
+                services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
+                trace_symbols=trace_symbols, trace_interrupts=trace_interrupts, engine_dir=engine_dir,
+            )
+        else:
+            self._b = _RenodeBackend(
+                machines, base=self._base, work=self._work, media=scenario.get("media"),
+                services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
+                trace_symbols=trace_symbols, trace_interrupts=trace_interrupts,
+                show_logs=show_logs, engine_dir=engine_dir,
+            )
+        self.machines: list[str] = list(self._b.machines)
 
     # -- stimulus -----------------------------------------------------------
 
@@ -232,33 +206,33 @@ class Sim:
         self.send_bytes((text + line_ending).encode("latin-1"), uart, machine)
 
     def send_bytes(self, data: bytes, uart: str | None = None, machine: str | None = None) -> None:
-        self._session.Send(bytes(data), uart or self.uart, machine or self.machine)
+        self._b.send(bytes(data), uart or self.uart, machine or self.machine)
 
     def inject_gpio(self, peripheral: str, pin: int, state: bool, machine: str | None = None) -> None:
         """Drive an external GPIO input line (a button press/release)."""
-        self._session.InjectGpio(peripheral, pin, state, machine or self.machine)
+        self._b.inject_gpio(peripheral, pin, state, machine or self.machine)
 
     def inject_can(self, peripheral: str, can_id: int, data: bytes, *, extended: bool = False,
                    remote: bool = False, fd: bool = False, brs: bool = False,
                    machine: str | None = None) -> None:
         """Put a CAN frame on the bus as seen by `peripheral`."""
-        self._session.InjectCan(peripheral, can_id, bytes(data), extended, remote, fd, brs,
-                                machine or self.machine)
+        self._b.inject_can(peripheral, can_id, bytes(data), extended, remote, fd, brs,
+                           machine or self.machine)
 
     def inject_radio(self, peripheral: str, frame: bytes, machine: str | None = None) -> None:
         """Deliver a raw radio frame to a radio peripheral."""
-        self._session.InjectRadio(peripheral, bytes(frame), machine or self.machine)
+        self._b.inject_radio(peripheral, bytes(frame), machine or self.machine)
 
     # -- time control -------------------------------------------------------
 
     def run_for(self, virtual_seconds: float) -> float:
         """Advance exactly this much virtual time, then hold. Returns elapsed virtual time."""
-        return self._await(self._session.RunForAsync(float(virtual_seconds)))
+        return self._b.run_for(float(virtual_seconds))
 
     @property
     def time(self) -> float:
         """Elapsed virtual time in seconds."""
-        return self._session.VirtualTime
+        return self._b.time
 
     def expect(self, pattern: str, timeout: float = 30, uart: str | None = None,
                machine: str | None = None) -> Match:
@@ -278,11 +252,11 @@ class Sim:
             self._consume(m.end())
             return Match(m.group(0), t)
 
-        r = self._await(self._session.ExpectAsync(pattern, uart or self.uart, machine or self.machine, float(timeout)))
-        if not r.Matched:
-            raise ExpectTimeout(pattern, text + r.Text, r.VirtualSeconds)
-        live = rx.search(r.Text)
-        matched_text = live.group(0) if live else r.Text
+        matched, live_text, at = self._b.expect(pattern, uart or self.uart, machine or self.machine, float(timeout))
+        if not matched:
+            raise ExpectTimeout(pattern, text + live_text, at)
+        live = rx.search(live_text)
+        matched_text = live.group(0) if live else live_text
         # Consume the stream through the live match and no further, so lines
         # printed in the overshoot stay buffered for the next expect.
         self._drain_pending()
@@ -294,7 +268,7 @@ class Sim:
             idx = text.rfind(matched_text)
             if idx >= 0:
                 self._consume(idx + len(matched_text))
-        return Match(matched_text, r.VirtualSeconds)
+        return Match(matched_text, at)
 
     # -- observation (never advances time) ----------------------------------
 
@@ -306,53 +280,53 @@ class Sim:
 
     def uart_records(self, from_start: bool = False) -> list[dict]:
         """Timestamped UART records: {t, machine, label, text}."""
-        return self._records("uart", self._session.ReadUart, _uart, from_start)
+        return self._records("uart", from_start)
 
     def frames(self, from_start: bool = False) -> list[dict]:
         """Captured bus frames (CAN/SPI/I2C/BLE/Ethernet) since the last call."""
-        return self._records("frames", self._session.ReadFrames, _frame, from_start)
+        return self._records("frames", from_start)
 
     def logs(self, from_start: bool = False) -> list[dict]:
         """Simulator-side logs — unhandled registers, model warnings."""
-        return self._records("logs", self._session.ReadLogs, _log, from_start)
+        return self._records("logs", from_start)
 
     def interrupts(self, from_start: bool = False) -> list[dict]:
         """Interrupt entry/exit records (needs trace_interrupts=True)."""
-        return self._records("interrupts", self._session.ReadInterrupts, _interrupt, from_start)
+        return self._records("interrupts", from_start)
 
     def symbol_trace(self, from_start: bool = False) -> list[dict]:
         """Hits on trace_symbols= with their argument registers (non-halting)."""
-        return self._records("symbol_trace", self._session.ReadSymbolTrace, _symbol_trace, from_start)
+        return self._records("symbol_trace", from_start)
 
     def read_memory(self, address: int | str, count: int = 4, machine: str | None = None) -> bytes:
         """Read bytes from the system bus; `address` is an int or a symbol name."""
         if isinstance(address, str):
             address = self.symbol(address, machine)
-        return _bytes(self._session.ReadMemory(int(address), int(count), machine or self.machine))
+        return self._b.read_memory(int(address), int(count), machine or self.machine)
 
     def read_u32(self, address: int | str, machine: str | None = None) -> int:
         return int.from_bytes(self.read_memory(address, 4, machine), "little")
 
     def symbol(self, name: str, machine: str | None = None) -> int:
         """Address of an ELF symbol."""
-        return int(self._session.ResolveSymbol(name, machine or self.machine))
+        return self._b.symbol(name, machine or self.machine)
 
     def threads(self, machine: str | None = None) -> dict | None:
         """RTOS thread snapshot, e.g. {"rtos": "Zephyr", "threads": [{"name", "state",
         "priority", ...}], "truncated": False}; None when no RTOS is recognised."""
-        return _as_dict(self._session.Threads(machine or self.machine))
+        return self._b.threads(machine or self.machine)
 
     def heap(self, machine: str | None = None) -> dict | None:
         """Heap report, e.g. {"arenaStart", "arenaSizeBytes", "usedBytes", "freeBytes",
         "largestFreeBlockBytes", "fragmentationRatio", ...}; None when not recognised."""
-        return _as_dict(self._session.Heap(machine or self.machine))
+        return self._b.heap(machine or self.machine)
 
     # -- lifecycle ----------------------------------------------------------
 
     def close(self) -> None:
-        if getattr(self, "_session", None) is not None:
-            self._session.Dispose()
-            self._session = None
+        if getattr(self, "_b", None) is not None:
+            self._b.close()
+            self._b = None
 
     def __enter__(self) -> "Sim":
         return self
@@ -362,26 +336,13 @@ class Sim:
 
     # -- internals ----------------------------------------------------------
 
-    @staticmethod
-    def _await(task):
-        """Wait for an engine task while releasing the GIL: scripted peers run
-        Python on the emulation thread and need it while the clock is running."""
-        import time
-
-        while not task.IsCompleted:
-            time.sleep(0.0005)
-        if task.IsFaulted:
-            raise SimError(str(task.Exception.GetBaseException().Message))
-        return task.Result
-
-    def _records(self, key: str, reader, convert, from_start: bool) -> list[dict]:
+    def _records(self, key: str, from_start: bool) -> list[dict]:
         cursor = 0 if from_start else self._cursors[key]
         out: list[dict] = []
         while True:
-            page = reader(cursor, 2000)
-            out.extend(convert(r) for r in page.Records)
-            cursor = page.Next
-            if not page.Truncated:
+            page, cursor, truncated = self._b.records(key, cursor, 2000)
+            out.extend(page)
+            if not truncated:
                 break
         self._cursors[key] = cursor
         return out
@@ -407,3 +368,115 @@ class Sim:
             else:
                 self._pending[0] = (t, s[offset:])
                 offset = 0
+
+
+class _RenodeBackend:
+    """`Simantic.Core.Emulation.Session` via pythonnet — the default engine."""
+
+    _READERS = {"uart": ("ReadUart", _uart), "frames": ("ReadFrames", _frame), "logs": ("ReadLogs", _log),
+                "interrupts": ("ReadInterrupts", _interrupt), "symbol_trace": ("ReadSymbolTrace", _symbol_trace)}
+
+    def __init__(self, machines: list[dict], *, base: Path, work: Path, media, services, quantum,
+                 trace_symbols, trace_interrupts, show_logs, engine_dir):
+        self._base, self._work = base, work
+        ns = load(engine_dir)
+        spec = ns.SessionSpec()
+        spec.TraceInterrupts = trace_interrupts
+        spec.ShowBackendLogs = show_logs
+        for sym in trace_symbols:
+            spec.TraceSymbols.Add(sym)
+        for m in machines:
+            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"])
+        for med in media or []:
+            sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
+            sm.Strict = bool(med.get("strict", False))
+            if med.get("hostBridge"):
+                sm.HostBridge = med["hostBridge"]
+        for svc in services or []:
+            spec.AddService(svc["name"], svc["host"], int(svc.get("port", 0)),
+                            svc.get("type", "Antmicro.Renode.Peripherals.Network.EchoService"),
+                            self._service_args(svc.get("args", "")))
+        if quantum is not None:
+            spec.QuantumSeconds = float(quantum)
+        try:
+            self._session = ns.Session.Start(spec)
+        except Exception as exc:  # .NET exceptions surface as Python exceptions
+            raise SimError(f"could not start the simulation: {exc}") from None
+        self.machines = list(self._session.Machines)
+
+    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf) -> None:
+        """Platform file → AddMachine; model name → the local model library when
+        $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
+        (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
+        elf_path = str(self._base / elf)
+        if repl is not None:
+            if overlay is not None:
+                raise ValueError("overlay= applies to mcu=, not repl=")
+            spec.AddMachine(name, str(self._base / repl), elf_path)
+            return
+        if os.environ.get(MCU_LIB_ENV):
+            platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
+            spec.AddMachine(name, str(platform), elf_path)
+            return
+        fragment = (self._base / overlay).read_text() if overlay else None
+        spec.AddModel(name, mcu, elf_path, fragment)
+
+    def _service_args(self, args: str) -> str:
+        # A script path is the common case; make it absolute against cwd=.
+        p = self._base / args
+        return str(p) if args and p.exists() else args
+
+    def send(self, data, uart, machine):
+        self._session.Send(data, uart, machine)
+
+    def inject_gpio(self, peripheral, pin, state, machine):
+        self._session.InjectGpio(peripheral, pin, state, machine)
+
+    def inject_can(self, peripheral, can_id, data, extended, remote, fd, brs, machine):
+        self._session.InjectCan(peripheral, can_id, data, extended, remote, fd, brs, machine)
+
+    def inject_radio(self, peripheral, frame, machine):
+        self._session.InjectRadio(peripheral, frame, machine)
+
+    def run_for(self, seconds: float) -> float:
+        return self._await(self._session.RunForAsync(seconds))
+
+    @property
+    def time(self) -> float:
+        return self._session.VirtualTime
+
+    def expect(self, pattern, uart, machine, timeout):
+        r = self._await(self._session.ExpectAsync(pattern, uart, machine, timeout))
+        return bool(r.Matched), r.Text, r.VirtualSeconds
+
+    def records(self, kind, cursor, limit):
+        reader_name, convert = self._READERS[kind]
+        page = getattr(self._session, reader_name)(cursor, limit)
+        return [convert(r) for r in page.Records], page.Next, bool(page.Truncated)
+
+    def read_memory(self, address, count, machine) -> bytes:
+        return _bytes(self._session.ReadMemory(address, count, machine))
+
+    def symbol(self, name, machine) -> int:
+        return int(self._session.ResolveSymbol(name, machine))
+
+    def threads(self, machine):
+        return _as_dict(self._session.Threads(machine))
+
+    def heap(self, machine):
+        return _as_dict(self._session.Heap(machine))
+
+    def close(self) -> None:
+        self._session.Dispose()
+
+    @staticmethod
+    def _await(task):
+        """Wait for an engine task while releasing the GIL: scripted peers run
+        Python on the emulation thread and need it while the clock is running."""
+        import time
+
+        while not task.IsCompleted:
+            time.sleep(0.0005)
+        if task.IsFaulted:
+            raise SimError(str(task.Exception.GetBaseException().Message))
+        return task.Result

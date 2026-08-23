@@ -6,9 +6,9 @@ time by exact amounts, inject UART/GPIO/CAN/radio, read memory and RTOS state,
 and run as many simulations in parallel as you have cores. pytest is one way
 to use it, not a requirement.
 
-> **Alpha — not stable.** Version 0.2.x. The API, the CLI surface, and the
+> **Alpha — not stable.** Version 0.3.x. The API, the CLI surface, and the
 > report schema may change without a deprecation period, and any release may
-> break the previous one. Pin an exact version (`simantic==0.2.0`) if you
+> break the previous one. Pin an exact version (`simantic==0.3.0`) if you
 > depend on it. Not recommended for production pipelines yet.
 
 ```bash
@@ -16,9 +16,10 @@ pip install simantic
 ```
 
 That is the whole setup for Python. The first `Sim(...)` fetches the
-simulation engine (Simantic.Core plus a private .NET runtime — nothing else
-to install) into `~/.simantic/engine/<version>/`, checksum-verified against
-the public release manifest. `simantic install` fetches it up front, along
+simulation engine it needs — the Renode engine (Simantic.Core plus a
+private .NET runtime) into `~/.simantic/engine/<version>/`, or the Rust
+engine into `~/.simantic/engine-rust/<version>/` — checksum-verified
+against the public release manifest. Nothing else to install. `simantic install` fetches it up front, along
 with the `sim` binary if you also want the command-line tool.
 
 A Simantic account (`simantic auth`) is needed for one thing: resolving MCU
@@ -64,6 +65,24 @@ functions. See
 [docs/session-api.md](docs/session-api.md) and `examples/`.
 
 One-shot runs ("run 5 s, give me the transcript") are `run_firmware(...)`.
+
+## Pick your engine
+
+`Sim` runs on either of two engines, both hosted in your process, selected
+per simulation:
+
+```python
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                  # Renode engine (default)
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # Simantic's Rust engine
+```
+
+The script is the same; only the engine changes. The Rust engine is a
+single small extension module (fetched on first use, like the Renode
+engine), runs one machine, and is considerably faster. What it does not do
+yet — multi-machine scenarios, network services, scripted peers, CAN/radio
+injection, RTOS thread views — raises `simantic.NotSupported` naming the
+gap rather than silently doing nothing. The capability table both engines
+are ticked against is [simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
 
 ## Using it from pytest (optional)
 

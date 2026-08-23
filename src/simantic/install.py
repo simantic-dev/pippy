@@ -138,7 +138,10 @@ def resolve(
     binary: str, *, rid: str | None = None, channel: str | None = None
 ) -> Artifact:
     """The artifact this machine should download."""
-    manifest = fetch_manifest(binary, channel=channel)
+    return _resolve(fetch_manifest(binary, channel=channel), binary, rid)
+
+
+def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
     version = manifest.get("version")
     artifacts = manifest.get("artifacts")
     if not version or not isinstance(artifacts, dict):
@@ -282,7 +285,65 @@ def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
     payload = download(artifact)
     if not payload.startswith(b"PK\x03\x04"):
         raise InstallError("engine artifact is not a zip archive")
-    incoming = target.with_name(f".{artifact.version}.incoming")
+    _unpack_zip(payload, target)
+    return target
+
+
+# -- the Rust engine: the simantic_rust extension module ----------------------
+
+RUST_ENGINE_KEY = "engine-rust"
+#: The Rust engine is published under its own product manifest.
+RUST_ENGINE_PRODUCT = "pyrite"
+
+
+def rust_engine_root() -> Path:
+    """Where Rust engine releases live: ~/.simantic/engine-rust/<version>/."""
+    return simantic_home() / "engine-rust"
+
+
+def is_rust_engine(d: Path) -> bool:
+    return d.is_dir() and any(p.name.startswith("simantic_rust.") for p in d.iterdir())
+
+
+def installed_rust_engine() -> Path | None:
+    root = rust_engine_root()
+    if not root.exists():
+        return None
+    candidates = [d for d in root.iterdir() if is_rust_engine(d)]
+    return max(candidates, key=lambda d: _version_key(d.name)) if candidates else None
+
+
+def fetch_rust_manifest(*, channel: str | None = None, timeout: float = 30) -> dict:
+    channel = channel or default_channel()
+    url = f"{releases_url()}/{RUST_ENGINE_PRODUCT}/{channel}.json"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise InstallError(f"no published Rust engine (HTTP {exc.code} from {url})") from None
+    except urllib.error.URLError as exc:
+        raise InstallError(f"cannot reach the release server: {exc.reason}") from None
+    except json.JSONDecodeError as exc:
+        raise InstallError(f"release manifest is not valid JSON: {exc}") from None
+
+
+def install_rust_engine(*, force: bool = False, channel: str | None = None) -> Path:
+    """Download the Rust engine wheel for this machine and unpack it into
+    rust_engine_root()/<version>. A wheel is a zip; the module inside is abi3,
+    so one wheel per platform serves every supported Python."""
+    artifact = _resolve(fetch_rust_manifest(channel=channel), RUST_ENGINE_KEY, f"{RUST_ENGINE_KEY}-{current_rid()}")
+    target = rust_engine_root() / artifact.version
+    if is_rust_engine(target) and not force:
+        return target
+    payload = download(artifact)
+    if not payload.startswith(b"PK\x03\x04"):
+        raise InstallError("Rust engine artifact is not a wheel")
+    _unpack_zip(payload, target)
+    return target
+
+
+def _unpack_zip(payload: bytes, target: Path) -> None:
+    incoming = target.with_name(f".{target.name}.incoming")
     if incoming.exists():
         shutil.rmtree(incoming)
     incoming.mkdir(parents=True)
@@ -292,15 +353,14 @@ def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
                 # Refuse anything that would land outside the target.
                 dest = (incoming / name).resolve()
                 if not str(dest).startswith(str(incoming.resolve())):
-                    raise InstallError(f"engine archive has an unsafe path: {name}")
+                    raise InstallError(f"archive has an unsafe path: {name}")
             archive.extractall(incoming)
         if target.exists():
             shutil.rmtree(target)
         os.replace(incoming, target)
     except (OSError, zipfile.BadZipFile) as exc:
         shutil.rmtree(incoming, ignore_errors=True)
-        raise InstallError(f"cannot unpack the engine into {target}: {exc}") from None
-    return target
+        raise InstallError(f"cannot unpack into {target}: {exc}") from None
 
 
 def installed_version(binary: str) -> str | None:
