@@ -1,7 +1,6 @@
 """Python control of the Simantic simulators.
 
-One package covers both engines, because co-simulation puts them together:
-`analog-cli` for circuits and `sim` for firmware.
+The firmware engine, hosted in your process.
 
     import simantic
 
@@ -9,21 +8,15 @@ One package covers both engines, because co-simulation puts them together:
         sim.expect("ready"); sim.run_for(0.5)
     run = simantic.run_firmware("fw.elf", repl="board.repl",
                                 expect=["RESULT: PASS"])          # one-shot
-    report = simantic.run_tests("hardware/psu")                   # analog
 
-Neither binary is bundled. Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
-at them, or put them on PATH.
+The engine is fetched on first use. The `sim` CLI is optional; point
+`$SIMANTIC_SIM` at one, or put it on PATH.
 
-Installing this package also registers a pytest plugin that turns the
-manifests a project already keeps — `*.sim.toml` testplans and `test.yaml`
-fixture manifests — into individually addressable pytest items.
-
-The MCP-based agent session lives in `simantic.agent` and is not re-exported
-here: `Sim` is the Python surface; MCP is an adapter for chat clients.
+Installing this package also registers a pytest plugin that turns `test.yaml`
+fixture manifests into individually addressable pytest items.
 """
 
-from ._locate import BinaryNotFound, analog_cli
-from .analog import AnalogCliError, plan_path, plan_test_names, run_tests
+from ._locate import BinaryNotFound
 from .fixtures import (
     Manifest,
     ModelLibraryUnavailable,
@@ -32,36 +25,12 @@ from .fixtures import (
 )
 from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
-from .pyrite import pyrite_binary
-from .pyrite import run as run_pyrite
 from .engine import EngineNotFound, engine_dir
 from .session import ExpectTimeout, Match, Sim
-from .report import (
-    Expect,
-    Finding,
-    Measurement,
-    ReportError,
-    Summary,
-    Test,
-    TestReport,
-)
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
-    # analog
-    "AnalogCliError",
-    "Expect",
-    "Finding",
-    "Measurement",
-    "ReportError",
-    "Summary",
-    "Test",
-    "TestReport",
-    "analog_cli",
-    "plan_path",
-    "plan_test_names",
-    "run_tests",
     # firmware
     "Manifest",
     "ModelLibraryUnavailable",
@@ -70,11 +39,9 @@ __all__ = [
     "SimRun",
     "UnsupportedManifest",
     "load_manifest",
-    "pyrite_binary",
     "run_firmware",
-    "run_pyrite",
     "sim_binary",
-    # scripted sessions (sim --control-stdio)
+    # scripted sessions
     "Sim",
     "Match",
     "ExpectTimeout",

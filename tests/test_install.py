@@ -130,23 +130,14 @@ def test_missing_rid_lists_what_is_available(monkeypatch):
         install.resolve("sim", rid="win-x64")
 
 
-def test_pyrite_is_its_own_product(monkeypatch):
-    """A single self-contained binary, installed under its own name."""
-    assert _requested_url(monkeypatch, {}, binary="pyrite").endswith(
-        "/pyrite/latest.json"
-    )
-
-
 def test_install_and_status_cover_every_product():
     """`PRODUCTS` names what can be fetched; `_cli.BINARIES` is what the bare
-    `simantic install`/`simantic status` cover — pyrite had a real product
-    entry but was missing from BINARIES, so it silently sat out both.
+    `simantic install`/`simantic status` cover. A product missing from
+    BINARIES silently sits out both.
     """
     from simantic import _cli
 
-    assert {name for name, _ in _cli.BINARIES} == set(install.PRODUCTS) - {
-        "pyrite-mcp"
-    }
+    assert {name for name, _ in _cli.BINARIES} == set(install.PRODUCTS)
 
 
 def test_unknown_binary_is_refused():
@@ -214,13 +205,13 @@ def test_extracts_a_lone_entry_under_another_name():
 
 
 def test_extracts_from_a_gzipped_tarball():
-    """pyrite publishes .tar.gz; passing one through would install a tarball."""
-    assert install._extract(tarred("pyrite", b"ELF"), "pyrite") == b"ELF"
+    """Passing a .tar.gz through would install a tarball."""
+    assert install._extract(tarred("sim", b"ELF"), "sim") == b"ELF"
 
 
 def test_extracts_a_nested_entry():
     """Some archives put the binary under a directory."""
-    assert install._extract(tarred("pyrite-osx-arm64/pyrite", b"ELF"), "pyrite") == b"ELF"
+    assert install._extract(tarred("sim-osx-arm64/sim", b"ELF"), "sim") == b"ELF"
 
 
 def tarred(name: str, body: bytes) -> bytes:

@@ -104,13 +104,9 @@ def current_rid() -> str:
     return f"{system}-{arch}"
 
 
-#: Binary name -> release product prefix. A product that has published no
-#: manifest yet fails with a clear message rather than a stray 404.
+#: Binary name -> release product prefix.
 PRODUCTS = {
     "sim": "cli",
-    "analog-cli": "analog",
-    "pyrite": "pyrite",
-    "pyrite-mcp": "pyrite",
 }
 
 
