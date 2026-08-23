@@ -508,17 +508,20 @@ def engine_tar(files: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-ENGINE_FILES = {
-    "Simantic.Core.dll": b"dll",
-    "sim.runtimeconfig.json": b"{}",
-    "dotnet/host/fxr/10.0.0/libhostfxr.dylib": b"fxr",
-}
+ENGINE_FILES = {"Simantic.Core.dll": b"dll", "sim.runtimeconfig.json": b"{}"}
+RUNTIME_FILES = {"host/fxr/10.0.0/libhostfxr.dylib": b"fxr"}
+
+
+def fake_release(monkeypatch, version="0.9.0"):
+    """resolve()/download() for a release carrying both engine archives."""
+    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
+        version=version, url=f"https://releases.example/{rid}.tgz", sha256=None))
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(
+        RUNTIME_FILES if "dotnet-" in artifact.url else ENGINE_FILES))
 
 
 def test_install_engine_unpacks_under_a_version_dir(home, monkeypatch):
-    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
-        version="0.9.0", url="https://releases.example/engine.tgz", sha256=None))
-    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(ENGINE_FILES))
+    fake_release(monkeypatch)
     target = install.install_engine()
     assert target == install.engine_root() / "0.9.0"
     assert (target / "Simantic.Core.dll").read_bytes() == b"dll"
@@ -526,17 +529,19 @@ def test_install_engine_unpacks_under_a_version_dir(home, monkeypatch):
     assert install.installed_engine() == target
 
 
-def test_install_engine_asks_for_the_engine_rid(home, monkeypatch):
-    seen = {}
+def test_install_engine_asks_for_both_rids(home, monkeypatch):
+    seen = []
 
     def resolve(binary, rid=None, channel=None):
-        seen["rid"] = rid
-        return install.Artifact(version="0.9.0", url="u", sha256=None)
+        seen.append(rid)
+        return install.Artifact(version="0.9.0", url=f"u/{rid}", sha256=None)
 
     monkeypatch.setattr(install, "resolve", resolve)
-    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(ENGINE_FILES))
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_tar(
+        RUNTIME_FILES if "dotnet-" in artifact.url else ENGINE_FILES))
     install.install_engine()
-    assert seen["rid"] == f"engine-{install.current_rid()}"
+    rid = install.current_rid()
+    assert seen == [f"engine-{rid}", f"dotnet-{rid}"]
 
 
 def test_installed_engine_picks_the_newest_version(home, monkeypatch):
