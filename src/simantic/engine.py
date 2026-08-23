@@ -24,6 +24,41 @@ from .mcu import sim_binary
 ENV_DIR = "SIMANTIC_ENGINE_DIR"
 RUST_ENV_DIR = "SIMANTIC_RUST_ENGINE_DIR"
 
+#: Oldest engine this package can drive. The Session API it calls landed in
+#: sim 0.5.4; an older engine fails with a missing-member error deep inside
+#: pythonnet, so it is checked here where the message can say what to do.
+MIN_ENGINE = (0, 5, 4)
+
+
+class EngineTooOld(RuntimeError):
+    """The installed engine predates the API this package calls."""
+
+
+def _version_of(d: Path) -> tuple | None:
+    """The engine's version, from the directory name a managed install uses."""
+    parts = []
+    for piece in d.name.split("-")[0].split("."):
+        if not piece.isdigit():
+            return None
+        parts.append(int(piece))
+    return tuple(parts) if len(parts) >= 3 else None
+
+
+def check_engine_version(d: Path) -> None:
+    """Refuse an engine older than MIN_ENGINE; unknown versions pass.
+
+    A development publish directory has no version in its name — that path is
+    the developer's own problem, and blocking it would break local work.
+    """
+    found = _version_of(d)
+    if found is not None and found < MIN_ENGINE:
+        want = ".".join(str(p) for p in MIN_ENGINE)
+        have = ".".join(str(p) for p in found)
+        raise EngineTooOld(
+            f"engine {have} at {d} is older than {want}, which this package needs. "
+            f"Run `simantic install engine --force` to fetch the current one."
+        )
+
 
 class EngineNotFound(RuntimeError):
     """The engine assemblies could not be located or loaded."""
@@ -71,6 +106,7 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
 def load(explicit: str | os.PathLike[str] | None = None):
     """Host the .NET runtime and import Simantic.Core. Returns the Session namespace."""
     d = engine_dir(explicit)
+    check_engine_version(d)
     try:
         from pythonnet import load as load_runtime
     except ImportError as exc:  # pragma: no cover - dependency declared in pyproject

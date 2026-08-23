@@ -401,7 +401,10 @@ class _RenodeBackend:
         try:
             self._session = ns.Session.Start(spec)
         except Exception as exc:  # .NET exceptions surface as Python exceptions
-            raise SimError(f"could not start the simulation: {exc}") from None
+            # Chained, not swallowed: the engine's own exception stays
+            # reachable as __cause__ so a traceback shows what actually failed
+            # rather than only this wrapper's summary.
+            raise SimError(f"could not start the simulation: {exc}") from exc
         self.machines = list(self._session.Machines)
 
     def _add_machine(self, spec, name: str, repl, mcu, overlay, elf) -> None:

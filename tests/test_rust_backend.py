@@ -82,7 +82,7 @@ class FakeSession:
         out, keep = [], []
         for at, data in self._script:
             if at <= self.t:
-                out.extend((at, "usart2", b) for b in data)
+                out.append((at, "usart2", data))
             else:
                 keep.append((at, data))
         self._script = keep
@@ -148,3 +148,28 @@ def test_unsupported_calls_say_so(fake_engine):
 def test_backend_name_is_validated():
     with pytest.raises(ValueError, match="backend"):
         Sim(elf="fw.elf", repl="a.repl", backend="qemu")
+
+
+# -- the contracts pyrenode3 lacks (docs/competitors/pyrenode3.md §4.7/§4.8) --
+
+def test_an_engine_older_than_the_api_is_refused(tmp_path):
+    from simantic.engine import EngineTooOld, check_engine_version
+
+    check_engine_version(tmp_path / "0.5.4")     # exactly the minimum
+    check_engine_version(tmp_path / "0.6.0")
+    check_engine_version(tmp_path / "dev-publish")  # unversioned: developer's own
+    with pytest.raises(EngineTooOld, match="0.5.3"):
+        check_engine_version(tmp_path / "0.5.3")
+
+
+def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
+    repl, elf = fake_engine
+
+    def boom(repl_text, elf_bytes):
+        raise RuntimeError("repl parse error at line 5")
+
+    monkeypatch.setattr(sys.modules["simantic_rust"], "Session", boom)
+    with pytest.raises(Exception) as exc:
+        Sim(elf=elf, repl=repl, backend="rust")
+    assert "repl parse error at line 5" in str(exc.value)
+    assert isinstance(exc.value.__cause__, RuntimeError)

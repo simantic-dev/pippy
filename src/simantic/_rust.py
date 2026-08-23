@@ -42,7 +42,7 @@ class RustBackend:
         try:
             self._s = engine.Session(text, self._elf)
         except Exception as exc:
-            raise SimError(str(exc)) from None
+            raise SimError(str(exc)) from exc
         self._symbols: dict[str, int] | None = None
         self._records: dict[str, list[dict]] = {k: [] for k in ("uart", "frames", "logs", "interrupts", "symbol_trace")}
         self._records["logs"] = [{"t": 0.0, "level": "Warning", "source": "platform", "message": w}
@@ -88,13 +88,11 @@ class RustBackend:
 
     def _advance(self, seconds: float) -> list[dict]:
         self._s.run_for(float(seconds))
-        fresh: list[dict] = []
-        for t, label, byte in self._s.take_uart():
-            ch = chr(byte)
-            if fresh and fresh[-1]["label"] == label:
-                fresh[-1]["text"] += ch
-            else:
-                fresh.append({"t": t, "machine": self.machines[0], "label": label, "text": ch})
+        # The engine hands back runs of bytes, not one entry per byte: the
+        # per-object boundary cost is what dominates a chatty UART.
+        fresh = [{"t": t, "machine": self.machines[0], "label": label,
+                  "text": bytes(data).decode("latin-1")}
+                 for t, label, data in self._s.take_uart()]
         self._records["uart"].extend(fresh)
         return fresh
 
@@ -110,7 +108,7 @@ class RustBackend:
         try:
             return bytes(self._s.read_memory(int(address), int(count)))
         except Exception as exc:
-            raise SimError(str(exc)) from None
+            raise SimError(str(exc)) from exc
 
     def symbol(self, name: str, machine: str | None) -> int:
         if self._symbols is None:
