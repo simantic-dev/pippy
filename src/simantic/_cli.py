@@ -15,16 +15,8 @@ from . import auth, install, telemetry
 from ._locate import BinaryNotFound, locate
 from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
-from ._locate import BINARY as ANALOG_BINARY
-from ._locate import ENV_VAR as ANALOG_ENV
-from .pyrite import BINARY as PYRITE_BINARY
-from .pyrite import ENV_VAR as PYRITE_ENV
 
-BINARIES = (
-    (ANALOG_BINARY, ANALOG_ENV),
-    (SIM_BINARY, SIM_ENV),
-    (PYRITE_BINARY, PYRITE_ENV),
-)
+BINARIES = ((SIM_BINARY, SIM_ENV),)
 
 
 def _auth(args) -> int:
@@ -59,8 +51,8 @@ def _install(args) -> int:
         except install.InstallError as exc:
             print(f"{name}: {exc}", file=sys.stderr)
             failures += 1
-    # Partial success is still useful — one engine may be published and the
-    # other not — so report it without discarding what did install.
+    # Partial success is still useful, so report it without discarding what
+    # did install.
     return 1 if failures == len(names) else 0
 
 

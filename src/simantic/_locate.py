@@ -66,11 +66,3 @@ def locate(
         f"PATH, or set ${env_var} to its location."
     )
 
-
-ENV_VAR = "SIMANTIC_ANALOG_CLI"
-BINARY = "analog-cli"
-
-
-def analog_cli(explicit: str | os.PathLike[str] | None = None) -> Path:
-    """Resolve the analog-cli binary, or raise BinaryNotFound."""
-    return locate(BINARY, ENV_VAR, explicit)

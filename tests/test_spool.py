@@ -50,9 +50,9 @@ def test_calls_are_buffered_not_sent(uploads):
 def test_repeated_calls_become_counts(uploads):
     for _ in range(3):
         telemetry.record("mcp.gdb_step")
-    telemetry.record("sdk.run_pyrite")
+    telemetry.record("sdk.run_firmware")
     telemetry.flush(force=True)
-    assert uploads[0]["calls"] == {"mcp.gdb_step": 3, "sdk.run_pyrite": 1}
+    assert uploads[0]["calls"] == {"mcp.gdb_step": 3, "sdk.run_firmware": 1}
 
 
 def test_opting_out_records_nothing(monkeypatch, uploads):

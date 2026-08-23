@@ -1,15 +1,14 @@
 # simantic
 
-Python control of the [Simantic](https://simantic.dev) simulators — the
-firmware engine hosted in your process, circuits via `analog-cli`. Everything
-the CLIs can do, as objects and method calls: start a board or a multi-machine scenario, advance virtual
+Python control of the [Simantic](https://simantic.dev) firmware simulator,
+hosted in your process. Everything the `sim` CLI can do, as objects and method calls: start a board or a multi-machine scenario, advance virtual
 time by exact amounts, inject UART/GPIO/CAN/radio, read memory and RTOS state,
 and run as many simulations in parallel as you have cores. pytest is one way
 to use it, not a requirement.
 
-> **Alpha — not stable.** Version 0.1.x. The API, the CLI surface, and the
+> **Alpha — not stable.** Version 0.2.x. The API, the CLI surface, and the
 > report schema may change without a deprecation period, and any release may
-> break the previous one. Pin an exact version (`simantic==0.1.0`) if you
+> break the previous one. Pin an exact version (`simantic==0.2.0`) if you
 > depend on it. Not recommended for production pipelines yet.
 
 ```bash
@@ -20,8 +19,7 @@ That is the whole setup for Python. The first `Sim(...)` fetches the
 simulation engine (Simantic.Core plus a private .NET runtime — nothing else
 to install) into `~/.simantic/engine/<version>/`, checksum-verified against
 the public release manifest. `simantic install` fetches it up front, along
-with the `sim` and `analog-cli` binaries if you also want the command-line
-tools.
+with the `sim` binary if you also want the command-line tool.
 
 A Simantic account (`simantic auth`) is needed for one thing: resolving MCU
 models by name (`mcu="STM32F401RE"`), which are fetched from your account
@@ -39,10 +37,9 @@ Every download — engine or binary — is verified against the checksum in the
 release manifest. The package on PyPI contains only Python; the simulators
 are never in the wheel.
 
-Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
-at them, or put them on PATH — both take precedence over a managed install.
-`simantic status` shows what is authenticated and which binary each name
-resolves to.
+Already have `sim`? Point `$SIMANTIC_SIM` at it, or put it on PATH — both
+take precedence over a managed install. `simantic status` shows what is
+authenticated and what resolved.
 
 ## Drive a simulation
 
@@ -71,70 +68,27 @@ One-shot runs ("run 5 s, give me the transcript") are `run_firmware(...)`.
 ## Using it from pytest (optional)
 
 `Sim` needs no plugin — construct it inside any test. If you also keep
-manifests, installing the package registers two collectors that turn them
-into individually addressable pytest items:
-
-- `*.sim.toml` — one item per `[[test]]` table (analog)
-- `test.yaml` — one item per fixture (firmware)
+`test.yaml` fixture manifests, installing the package registers a collector
+that turns each fixture into an individually addressable pytest item.
 
 ```console
-$ pytest hardware/ firmware/
-hardware/psu/psu.sim.toml::schematic-erc                PASSED
-hardware/psu/psu.sim.toml::rails-op                     PASSED
-hardware/psu/psu.sim.toml::startup-settling             FAILED
-hardware/psu/psu.sim.toml::board-drc                    SKIPPED (no .kicad_pcb)
+$ pytest firmware/
 firmware/tests/gpio-loopback/test.yaml::gpio-loopback   PASSED
+firmware/tests/uart-echo/test.yaml::uart-echo           FAILED
 ```
 
 Because these are ordinary pytest items you get `-k` filtering, `--junitxml`
 for CI, xdist parallelism, and per-test durations. Failures print the
-runner's own explanation rather than a Python traceback:
-
-```
-startup-settling (tran): fail
-  FAIL settle-time: V(OUT) measured 0.0082 (expected max 0.006, margin -0.0022)
-```
+runner's own explanation — the UART transcript and the expectation it
+missed — rather than a Python traceback.
 
 Tests that cannot run in the current environment skip rather than fail — a
-missing binary, an unconfigured server, an analysis the installed CLI does
-not support, a check inapplicable to the project. A red run means a
+missing binary or an unconfigured server. A red run means a
 simulation ran and disagreed with its expectations.
 
 ## Library
 
-### Circuits
-
-```python
-import simantic
-
-report = simantic.run_tests("hardware/psu")
-print(f"{report.summary.passed}/{report.summary.total} passed")
-
-for m in report.test("rails-op").measurements:
-    print(m.describe())   # out-dc: V(OUT) measured 1.597 (expected eq 1.597 +/- 0.02, margin 0.02)
-```
-
-A failing test is data, not an exception: it arrives in the report with its
-measured value, declared bounds, and margin. Only conditions that prevent a
-run at all — bad project, missing `kicad-cli`, invalid testplan — raise
-`AnalogCliError`.
-
-### Firmware
-
-The shortest path is a pytest fixture — no manifest, no flags:
-
-```python
-def test_firmware_boots(pyrite):
-    run = pyrite("build/zephyr.elf", board="stm32f401",
-                 expect=["Hello World!"], expect_absent=["FAULT"])
-    assert run.passed, run.failure_report()
-```
-
-`pyrite` runs the ELF offline on the pure-Rust backend and hands back the
-UART transcript. The fixture skips when no binary is installed, so a suite
-stays green on a machine that has not run `smtc install pyrite`.
-
-The same runner is available as a plain function, and `sim` has its own:
+The one-shot runner:
 
 ```python
 run = simantic.run_firmware(
@@ -184,10 +138,6 @@ best-effort: if it fails, is blocked, or you are offline, your tests are
 unaffected and nothing is printed.
 
 ## Compatibility
-
-Speaks the `analog-cli.test-report/1` schema. Additive fields within that
-revision are tolerated; a breaking revision raises `ReportError` rather than
-silently misreading a report.
 
 Multi-machine `test.yaml` fixtures — those with a `machines:` map — need the
 `--scenario` runner and are not driven yet; they report as skips.
