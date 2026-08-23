@@ -30,7 +30,6 @@ def home(tmp_path, monkeypatch):
     # channels, products, checksums, placement. The gate that decides *which*
     # URL is exercised in "the release gate" below, and turned off here so
     # those tests read the direct one.
-    monkeypatch.setenv("SIMANTIC_GATE_URL", "")
     return tmp_path
 
 
@@ -42,87 +41,6 @@ def zipped(name: str, body: bytes) -> bytes:
 
 
 # --- the account gate ---
-
-
-def test_fetching_without_an_account_is_refused(home, monkeypatch):
-    """Fails closed, and before any network call — no anonymous fallback."""
-    (home / ".sim_id").unlink()
-
-    def explode(*a, **k):
-        raise AssertionError("must not reach the network unauthenticated")
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", explode)
-    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
-        install.install("sim")
-
-
-def test_the_token_is_sent_with_every_release_request(monkeypatch):
-    seen = []
-
-    def capture(request, **k):
-        seen.append(request.get_header("Authorization"))
-        raise install.urllib.error.URLError("stop here")
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
-    with pytest.raises(install.InstallError):
-        install.fetch_manifest("sim")
-    # An artifact hosted on the release server itself is authenticated too.
-    on_host = install.Artifact("0.4.0", f"{install.releases_url()}/cli/x.zip", None)
-    with pytest.raises(install.InstallError):
-        install.download(on_host)
-    assert seen == ["Bearer smtc_" + "a" * 32] * 2
-
-
-def test_the_token_is_not_sent_to_a_host_the_manifest_names(monkeypatch):
-    """A manifest is data. One naming another host must not be handed the
-    user's credentials."""
-    seen = []
-
-    def capture(request, **k):
-        seen.append(request.get_header("Authorization"))
-        raise install.urllib.error.URLError("stop here")
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
-    evil = install.Artifact("0.4.0", "https://evil.invalid/x.zip", None)
-    with pytest.raises(install.InstallError):
-        install.download(evil)
-    assert seen == [None]
-
-
-def test_the_token_is_never_sent_in_the_clear(monkeypatch):
-    """Same host over http still gets no credentials."""
-    monkeypatch.setenv("SIMANTIC_RELEASES_URL", "http://localhost:8765")
-    seen = []
-
-    def capture(request, **k):
-        seen.append(request.get_header("Authorization"))
-        raise install.urllib.error.URLError("stop here")
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
-    with pytest.raises(install.InstallError):
-        install.fetch_manifest("sim")
-    assert seen == [None]
-
-
-def test_an_unauthenticated_user_is_still_stopped_for_an_offsite_url(home, monkeypatch):
-    """Scoping the header must not become a way to skip the account check."""
-    (home / ".sim_id").unlink()
-    monkeypatch.setattr(
-        install.urllib.request, "urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no request")),
-    )
-    with pytest.raises(auth.NotAuthenticated):
-        install.download(install.Artifact("1", "https://evil.invalid/x", None))
-
-
-@pytest.mark.parametrize("code", [401, 403])
-def test_a_rejected_token_says_to_authenticate(code, monkeypatch):
-    def refuse(*a, **k):
-        raise install.urllib.error.HTTPError("u", code, "no", {}, None)
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", refuse)
-    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
-        install.fetch_manifest("sim")
 
 
 # --- release channels ---
@@ -420,78 +338,6 @@ def gated(monkeypatch, responses):
 SIGNED = b'{"url": "https://signed.invalid/m", "expires_in": 300}'
 
 
-def test_the_manifest_is_fetched_through_the_gate(monkeypatch):
-    """Not from a public URL: that is the whole point."""
-    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
-    assert install.fetch_manifest("pyrite") == MANIFEST
-    assert seen[0].full_url.startswith(install.GATE_URL)
-    assert "path=pyrite/latest.json" in seen[0].full_url
-    assert seen[1].full_url == "https://signed.invalid/m"
-
-
-def test_the_token_authenticates_the_gate_not_the_download(monkeypatch):
-    """A signed URL carries its own authorisation, and the storage endpoint
-    would reject a PAT in an Authorization header alongside it."""
-    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
-    install.fetch_manifest("pyrite")
-    assert seen[0].get_header("Authorization") == "Bearer smtc_" + "a" * 32
-    assert seen[1].get_header("Authorization") is None
-
-
-def test_the_channel_reaches_the_gate(monkeypatch):
-    """The bucket is chosen server-side, so the channel has to travel."""
-    seen = gated(monkeypatch, [SIGNED, json.dumps(MANIFEST).encode()])
-    install.fetch_manifest("pyrite", channel="testing")
-    assert "channel=testing" in seen[0].full_url
-    assert "path=pyrite/testing.json" in seen[0].full_url
-
-
-def test_a_gated_manifest_names_a_path_not_a_url(monkeypatch):
-    """An artifact in a private bucket has no URL to publish, so the manifest
-    names the object and the signature is minted at download time — a five
-    minute signature taken when the manifest was read could be stale."""
-    manifest = {
-        "version": "0.2.0",
-        "artifacts": {"osx-arm64": {"path": "pyrite/0.2.0/osx-arm64.tar.gz"}},
-    }
-    seen = gated(
-        monkeypatch,
-        [
-            SIGNED,
-            json.dumps(manifest).encode(),
-            b'{"url": "https://signed.invalid/artifact"}',
-            b"binary",
-        ],
-    )
-    artifact = install.resolve("pyrite", rid="osx-arm64")
-    assert artifact.path == "pyrite/0.2.0/osx-arm64.tar.gz"
-    assert install.download(artifact) == b"binary"
-    assert "path=pyrite/0.2.0/osx-arm64.tar.gz" in seen[2].full_url
-
-
-def test_a_rejected_token_at_the_gate_says_to_authenticate(monkeypatch):
-    monkeypatch.delenv("SIMANTIC_GATE_URL", raising=False)
-
-    def refuse(request, **k):
-        raise install.urllib.error.HTTPError(request.full_url, 401, "no", {}, None)
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", refuse)
-    with pytest.raises(auth.NotAuthenticated, match="smtc auth"):
-        install.fetch_manifest("pyrite")
-
-
-def test_an_unauthenticated_user_never_reaches_the_gate(monkeypatch, home):
-    (home / ".sim_id").unlink()
-    monkeypatch.delenv("SIMANTIC_GATE_URL", raising=False)
-
-    def explode(*a, **k):
-        raise AssertionError("a request was made without credentials")
-
-    monkeypatch.setattr(install.urllib.request, "urlopen", explode)
-    with pytest.raises(auth.NotAuthenticated):
-        install.fetch_manifest("pyrite")
-
-
 # -- the engine archive ------------------------------------------------------
 
 
@@ -561,12 +407,12 @@ def test_engine_archive_paths_must_stay_inside(home, monkeypatch):
         install.install_engine()
 
 
-def test_engine_dir_explains_when_unauthenticated(home, monkeypatch):
+def test_engine_dir_explains_when_no_release_is_reachable(home, monkeypatch):
     from simantic import engine
 
     monkeypatch.delenv("SIMANTIC_SIM", raising=False)
     monkeypatch.delenv("SIMANTIC_ENGINE_DIR", raising=False)
     monkeypatch.setenv("PATH", "")
-    auth.sim_id_path().unlink(missing_ok=True)
-    with pytest.raises(engine.EngineNotFound, match="simantic auth"):
+    monkeypatch.setattr(install, "install_engine", lambda **kw: (_ for _ in ()).throw(install.InstallError("offline")))
+    with pytest.raises(engine.EngineNotFound, match="could not fetch the engine: offline"):
         engine.engine_dir()

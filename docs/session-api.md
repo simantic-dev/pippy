@@ -84,7 +84,7 @@ the `sim` CLI is built on. There is no subprocess and no protocol: method
 calls are method calls, records are objects. The engine is located in this
 order: `$SIMANTIC_ENGINE_DIR`; a development `sim` publish directory
 (`$SIMANTIC_SIM`); the managed install under `~/.simantic/engine/<version>/`
-— and if none exists and credentials are stored, it is fetched on the spot.
+— and if none exists it is fetched from the public release on the spot.
 The managed engine bundles its own .NET runtime, so a machine needs only
 Python.
 

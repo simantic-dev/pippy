@@ -17,7 +17,7 @@ import sys
 from functools import cache
 from pathlib import Path
 
-from . import auth, install
+from . import install
 from ._locate import BinaryNotFound
 from .mcu import sim_binary
 
@@ -37,9 +37,9 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
 
     Order: an explicit path, $SIMANTIC_ENGINE_DIR, a development `sim` whose
     publish directory is beside it ($SIMANTIC_SIM), then the managed install
-    under ~/.simantic/engine. When nothing is there and credentials are
-    stored, the engine is fetched — so the first `Sim(...)` after
-    `simantic auth` just works. Without credentials it says what to do.
+    under ~/.simantic/engine. When nothing is there, the engine is fetched
+    from the public release — so the first `Sim(...)` after `pip install`
+    just works.
     """
     candidates = []
     if explicit is not None:
@@ -57,13 +57,6 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
     if managed is not None:
         return managed
     if fetch:
-        try:
-            auth.load()
-        except auth.NotAuthenticated:
-            raise EngineNotFound(
-                "no simulation engine installed and no credentials stored: run `simantic auth` "
-                "(then the engine is fetched on first use, or run `simantic install engine`)."
-            ) from None
         try:
             return install.install_engine()
         except install.InstallError as exc:

@@ -15,8 +15,8 @@ Binaries land in ~/.simantic/bin, which the resolver searches. Nothing is
 written into site-packages: an installed package may be read-only, and a
 binary there would vanish on the next upgrade.
 
-Fetching requires an account: every request carries the stored token, and
-an unauthenticated install stops before it reaches the network.
+Releases are public objects, keyed by version, so fetching needs no account;
+checksums from the manifest are what make a download trustworthy.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import auth
 
 RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases"
 
@@ -44,41 +43,11 @@ RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/publi
 def releases_url() -> str:
     """Where manifests are served from. $SIMANTIC_RELEASES_URL overrides.
 
-    Overridable so a release can be rehearsed against a staging host before
-    it is published, and so the base can later move behind an endpoint that
-    checks the token this client already sends.
+    Overridable so a release can be rehearsed against a staging host (or a
+    plain directory served over HTTP) before it is published.
     """
     return os.environ.get("SIMANTIC_RELEASES_URL", RELEASES_URL).rstrip("/")
 
-
-#: Trades the token for a short-lived signed URL into a private bucket.
-#:
-#: The token check has to happen on the server. This installer is readable —
-#: it names its own download URL — so a check performed here is a check any
-#: reader can skip by fetching that URL directly. The engine is about a
-#: megabyte; re-hosting it is a `curl` and an upload. Only an object that
-#: cannot be fetched without a signature makes the check mean anything.
-GATE_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/get-release"
-
-
-def gate_url() -> str:
-    """The signing endpoint, or "" to fetch straight from a public bucket.
-
-    Set $SIMANTIC_GATE_URL="" together with $SIMANTIC_RELEASES_URL to install
-    from a plain directory of files — used by the tests and by anyone serving
-    their own mirror. Unset, the gated path is what runs.
-    """
-    configured = os.environ.get("SIMANTIC_GATE_URL")
-    return (GATE_URL if configured is None else configured).rstrip("/")
-
-#: Binary name -> release product prefix. A product that has published no
-#: manifest yet fails with a clear message rather than a stray 404.
-PRODUCTS = {
-    "sim": "cli",
-    "analog-cli": "analog",
-    "pyrite": "pyrite",
-    "pyrite-mcp": "pyrite",
-}
 
 #: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.
 DEFAULT_CHANNEL = "latest"
@@ -97,12 +66,6 @@ class Artifact:
     version: str
     url: str
     sha256: str | None
-    #: Set when the manifest names an object in a gated bucket rather than a
-    #: public URL. Signed at download time, because a signature minted when
-    #: the manifest was read may have expired by the time the bytes are
-    #: wanted.
-    path: str | None = None
-    channel: str | None = None
 
 
 def simantic_home() -> Path:
@@ -141,76 +104,14 @@ def current_rid() -> str:
     return f"{system}-{arch}"
 
 
-def _headers(url: str) -> dict[str, str]:
-    """Authorization for a release request.
-
-    Raises NotAuthenticated rather than falling back to an anonymous fetch:
-    an install must fail closed, and failing here costs nothing but a clear
-    message before any network round trip.
-
-    The token is only attached to the release host itself. Artifact URLs come
-    out of a manifest, which is data rather than code — a manifest naming
-    another host would otherwise have this client hand that host the user's
-    credentials. Off-host downloads still happen; they happen anonymously.
-    """
-    credentials = auth.load()  # fail closed before any request, wherever it goes
-    target, home = urllib.parse.urlparse(url), urllib.parse.urlparse(releases_url())
-    # Same host, and never in the clear: a bearer token on http is readable by
-    # anything on the path, so a staging or local host gets an anonymous fetch
-    # rather than the user's credentials.
-    if target.netloc != home.netloc or target.scheme != "https":
-        return {}
-    return {"Authorization": f"Bearer {credentials.api_key}"}
-
-
-def signed_url(path: str, *, channel: str | None = None, timeout: float = 30) -> str:
-    """Ask the gate to sign `path`, proving the token before anything is served.
-
-    A 401 here is the gate doing its job, so it is reported as such rather
-    than as a download failure.
-    """
-    credentials = auth.load()  # fail closed before the request
-    endpoint = (
-        f"{gate_url()}?path={urllib.parse.quote(path)}"
-        f"&channel={urllib.parse.quote(channel or default_channel())}"
-    )
-    request = urllib.request.Request(
-        endpoint, headers={"Authorization": f"Bearer {credentials.api_key}"}
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            raise auth.NotAuthenticated(
-                f"the backend rejected your credentials (HTTP {exc.code}) — "
-                "run `smtc auth`"
-            ) from None
-        if exc.code == 404:
-            raise InstallError(f"no release artifact at {path!r}") from None
-        raise InstallError(f"release gate failed: HTTP {exc.code}") from None
-    except urllib.error.URLError as exc:
-        raise InstallError(f"cannot reach the release gate: {exc.reason}") from None
-    except json.JSONDecodeError as exc:
-        raise InstallError(f"release gate returned invalid JSON: {exc}") from None
-
-    url = body.get("url")
-    if not isinstance(url, str) or not url:
-        raise InstallError("release gate returned no URL")
-    return url
-
-
-def _object_url(path: str, *, channel: str | None = None) -> tuple[str, dict[str, str]]:
-    """Where to fetch a release object from, and what to send with it.
-
-    A signed URL carries its own authorisation in the query string, and the
-    storage endpoint expects a JWT in an Authorization header — sending the
-    PAT alongside it would be rejected. So a signed fetch sends no headers.
-    """
-    if gate_url():
-        return signed_url(path, channel=channel), {}
-    url = f"{releases_url()}/{path}"
-    return url, _headers(url)
+#: Binary name -> release product prefix. A product that has published no
+#: manifest yet fails with a clear message rather than a stray 404.
+PRODUCTS = {
+    "sim": "cli",
+    "analog-cli": "analog",
+    "pyrite": "pyrite",
+    "pyrite-mcp": "pyrite",
+}
 
 
 def fetch_manifest(
@@ -222,17 +123,11 @@ def fetch_manifest(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     channel = channel or default_channel()
-    url, headers = _object_url(f"{product}/{channel}.json", channel=channel)
-    request = urllib.request.Request(url, headers=headers)
+    request = urllib.request.Request(f"{releases_url()}/{product}/{channel}.json")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            raise auth.NotAuthenticated(
-                f"the backend rejected your credentials for {binary!r} "
-                "(HTTP {}) — run `simantic auth`".format(exc.code)
-            ) from None
         raise InstallError(
             f"no published releases for {binary!r} (HTTP {exc.code} from {url}). "
             "Install the binary yourself and point $SIMANTIC_* at it."
@@ -255,38 +150,21 @@ def resolve(
 
     rid = rid or current_rid()
     entry = artifacts.get(rid)
-    # A gated manifest names `path` (an object in a private bucket); a public
-    # one names `url`. Either is enough to locate the build.
-    if not entry or not (entry.get("url") or entry.get("path")):
+    if not entry or not entry.get("url"):
         available = ", ".join(sorted(artifacts)) or "none"
         raise InstallError(
             f"no {rid} build in {binary} release {version} (available: {available})"
         )
-    return Artifact(
-        version=version,
-        url=entry.get("url", ""),
-        sha256=entry.get("sha256"),
-        path=entry.get("path"),
-        channel=channel or default_channel(),
-    )
+    return Artifact(version=version, url=entry["url"], sha256=entry.get("sha256"))
 
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
-    if artifact.path:
-        url, headers = _object_url(artifact.path, channel=artifact.channel)
-    else:
-        url, headers = artifact.url, _headers(artifact.url)
-    request = urllib.request.Request(url, headers=headers)
+    request = urllib.request.Request(artifact.url)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
     except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            raise auth.NotAuthenticated(
-                f"the backend rejected your credentials (HTTP {exc.code}) — "
-                "run `simantic auth`"
-            ) from None
         raise InstallError(f"download failed: HTTP {exc.code}") from None
     except urllib.error.URLError as exc:
         raise InstallError(f"download failed: {exc.reason}") from None
@@ -399,7 +277,7 @@ def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
     Two archives from the `sim` release manifest, each under the release
     bucket's 50 MB object limit: `engine-<rid>` (Simantic.Core and friends)
     unpacked to <version>/, and `dotnet-<rid>` (a private .NET runtime)
-    unpacked to <version>/dotnet/. Same credentials and gate as the binaries.
+    unpacked to <version>/dotnet/.
     """
     rid = current_rid()
     engine = resolve("sim", rid=f"{ENGINE_KEY}-{rid}", channel=channel)
