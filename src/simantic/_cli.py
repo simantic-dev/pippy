@@ -75,7 +75,8 @@ def _status(args) -> int:
     engine = install.installed_engine()
     print(f"  engine: {engine if engine else 'not found (fetched on first use, or `simantic install engine`)'}")
     rust = install.installed_rust_engine()
-    print(f"  engine-rust: {rust if rust else 'not found (fetched on first use of backend=\"rust\", or `simantic install engine-rust`)'}")
+    missing = 'not found (fetched on first use of backend="rust", or `simantic install engine-rust`)'
+    print(f"  engine-rust: {rust if rust else missing}")
     print(telemetry.describe())
     return 0
 
