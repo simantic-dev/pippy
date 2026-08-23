@@ -74,9 +74,8 @@ def load(explicit: str | os.PathLike[str] | None = None):
         from pythonnet import load as load_runtime
     except ImportError as exc:  # pragma: no cover - dependency declared in pyproject
         raise EngineNotFound("pythonnet is required to host the engine: pip install pythonnet") from exc
-    # A managed engine carries its own runtime in dotnet/ (the dotnet-<rid>
-    # archive); a development publish directory relies on the machine's
-    # ($DOTNET_ROOT / default).
+    # A managed engine carries its own runtime in dotnet/; a development
+    # publish directory relies on the machine's ($DOTNET_ROOT / default).
     bundled = d / "dotnet"
     if (bundled / "host").is_dir():
         load_runtime("coreclr", runtime_config=str(d / "sim.runtimeconfig.json"), dotnet_root=str(bundled))

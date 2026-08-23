@@ -274,45 +274,37 @@ def _version_key(name: str) -> tuple:
 def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
     """Download the engine for this machine into engine_root()/<version>.
 
-    Two archives from the `sim` release manifest, each under the release
-    bucket's 50 MB object limit: `engine-<rid>` (Simantic.Core and friends)
-    unpacked to <version>/, and `dotnet-<rid>` (a private .NET runtime)
-    unpacked to <version>/dotnet/.
+    One zip from the `sim` release manifest, key `engine-<rid>`: the
+    Simantic.Core publish directory plus a private .NET runtime under
+    `dotnet/`, laid out exactly as published.
     """
-    rid = current_rid()
-    engine = resolve("sim", rid=f"{ENGINE_KEY}-{rid}", channel=channel)
-    target = engine_root() / engine.version
-    if (target / "Simantic.Core.dll").exists() and (target / "dotnet" / "host").is_dir() and not force:
+    artifact = resolve("sim", rid=f"{ENGINE_KEY}-{current_rid()}", channel=channel)
+    target = engine_root() / artifact.version
+    if (target / "Simantic.Core.dll").exists() and not force:
         return target
-    runtime = resolve("sim", rid=f"dotnet-{rid}", channel=channel)
 
-    incoming = target.with_name(f".{engine.version}.incoming")
+    payload = download(artifact)
+    if not payload.startswith(b"PK\x03\x04"):
+        raise InstallError("engine artifact is not a zip archive")
+    incoming = target.with_name(f".{artifact.version}.incoming")
     if incoming.exists():
         shutil.rmtree(incoming)
     incoming.mkdir(parents=True)
     try:
-        _unpack(download(engine), incoming, "engine")
-        _unpack(download(runtime), incoming / "dotnet", "runtime")
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            for name in archive.namelist():
+                # Refuse anything that would land outside the target.
+                dest = (incoming / name).resolve()
+                if not str(dest).startswith(str(incoming.resolve())):
+                    raise InstallError(f"engine archive has an unsafe path: {name}")
+            archive.extractall(incoming)
         if target.exists():
             shutil.rmtree(target)
         os.replace(incoming, target)
-    except (OSError, tarfile.TarError) as exc:
+    except (OSError, zipfile.BadZipFile) as exc:
         shutil.rmtree(incoming, ignore_errors=True)
         raise InstallError(f"cannot unpack the engine into {target}: {exc}") from None
     return target
-
-
-def _unpack(payload: bytes, dest: Path, what: str) -> None:
-    if not payload.startswith(b"\x1f\x8b"):
-        raise InstallError(f"{what} artifact is not a gzipped tar archive")
-    dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
-        for member in archive.getmembers():
-            # Refuse anything that would land outside the target.
-            resolved = (dest / member.name).resolve()
-            if not str(resolved).startswith(str(dest.resolve())):
-                raise InstallError(f"{what} archive has an unsafe path: {member.name}")
-        archive.extractall(dest, filter="data")
 
 
 def installed_version(binary: str) -> str | None:
