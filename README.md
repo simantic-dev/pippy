@@ -12,21 +12,21 @@ to use it, not a requirement.
 > break the previous one. Pin an exact version (`simantic==0.1.0`) if you
 > depend on it. Not recommended for production pipelines yet.
 
-> **A Simantic account is required.** Installing the package gets you the
-> Python code, but the simulators it drives are fetched from our backend and
-> every request is authenticated. Without `simantic auth`, nothing runs.
-
 ```bash
 pip install simantic
-simantic auth              # required: authenticates against your account
 ```
 
 That is the whole setup for Python. The first `Sim(...)` fetches the
 simulation engine (Simantic.Core plus a private .NET runtime — nothing else
-to install) into `~/.simantic/engine/<version>/`, verified against the
-release manifest, through the same authenticated gate the CLIs use.
-`simantic install` fetches it up front, along with the `sim` and
-`analog-cli` binaries if you also want the command-line tools.
+to install) into `~/.simantic/engine/<version>/`, checksum-verified against
+the public release manifest. `simantic install` fetches it up front, along
+with the `sim` and `analog-cli` binaries if you also want the command-line
+tools.
+
+A Simantic account (`simantic auth`) is needed for one thing: resolving MCU
+models by name (`mcu="STM32F401RE"`), which are fetched from your account
+and cached in `~/.sim_cache`. A platform file you supply (`repl=`) needs no
+account at all.
 
 `simantic auth` opens a browser tab to sign in — like `gh auth login` — and
 stores the resulting token in `~/.sim_id`, the same file the CLIs use, so one
@@ -36,9 +36,8 @@ on the dashboard's `/account/api` page. `--no-browser` falls back to an
 interactive prompt for a pasted token.
 
 Every download — engine or binary — is verified against the checksum in the
-release manifest and fails closed: with no stored credentials nothing is
-fetched and the error says to authenticate. The package on PyPI contains
-only Python; the simulators are never in the wheel.
+release manifest. The package on PyPI contains only Python; the simulators
+are never in the wheel.
 
 Already have the binaries? Point `$SIMANTIC_ANALOG_CLI` and `$SIMANTIC_SIM`
 at them, or put them on PATH — both take precedence over a managed install.
