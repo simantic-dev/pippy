@@ -173,3 +173,46 @@ def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
         Sim(elf=elf, repl=repl, backend="rust")
     assert "repl parse error at line 5" in str(exc.value)
     assert isinstance(exc.value.__cause__, RuntimeError)
+
+
+# -- the batching contract (docs/competitors/pyrenode3.md §7 rule 3) ----------
+
+class CountingSession(FakeSession):
+    """Reports how many objects crossed the boundary, against bytes delivered."""
+
+    def __init__(self, repl_text, elf):
+        super().__init__(repl_text, elf)
+        self.handed_over = 0
+        self._script = [(0.001, b"x" * 10_000)]
+
+    def take_uart(self):
+        runs = super().take_uart()
+        self.handed_over += len(runs)
+        return runs
+
+
+def test_a_burst_crosses_the_boundary_as_runs_not_per_byte(fake_engine, monkeypatch):
+    """10,000 bytes must not cost 10,000 Python objects.
+
+    At the measured 705 ns per .NET->CPython crossing, per-byte traffic is what
+    turns a display frame or a flash write into seconds of pure overhead. The
+    engine hands back runs; this pins that so a future change cannot quietly
+    regress to one object per byte.
+    """
+    repl, elf = fake_engine
+    monkeypatch.setattr(sys.modules["simantic_rust"], "Session", CountingSession)
+    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+        sim.run_for(0.002)
+        text = sim.read_uart(from_start=True)
+    session = CountingSession.instances[-1]
+    assert len(text) == 10_000
+    assert session.handed_over <= 4, f"{session.handed_over} objects for 10,000 bytes"
+
+
+def test_records_are_paged_not_returned_whole(fake_engine):
+    """Observation is pulled in bounded pages, so a long run cannot hand the
+    caller one unbounded list built object by object."""
+    repl, elf = fake_engine
+    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+        page, cursor, truncated = sim._b.records("uart", 0, 1)
+        assert len(page) <= 1 and cursor <= 1 and isinstance(truncated, bool)
