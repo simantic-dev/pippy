@@ -6,9 +6,9 @@ time by exact amounts, inject UART/GPIO/CAN/radio, read memory and RTOS state,
 and run as many simulations in parallel as you have cores. pytest is one way
 to use it, not a requirement.
 
-> **Alpha — not stable.** Version 0.2.x. The API, the CLI surface, and the
+> **Alpha — not stable.** Version 0.3.x. The API, the CLI surface, and the
 > report schema may change without a deprecation period, and any release may
-> break the previous one. Pin an exact version (`simantic==0.2.0`) if you
+> break the previous one. Pin an exact version (`simantic==0.3.0`) if you
 > depend on it. Not recommended for production pipelines yet.
 
 ```bash
@@ -16,9 +16,10 @@ pip install simantic
 ```
 
 That is the whole setup for Python. The first `Sim(...)` fetches the
-simulation engine (Simantic.Core plus a private .NET runtime — nothing else
-to install) into `~/.simantic/engine/<version>/`, checksum-verified against
-the public release manifest. `simantic install` fetches it up front, along
+simulation engine it needs — the Renode engine (Simantic.Core plus a
+private .NET runtime) into `~/.simantic/engine/<version>/`, or the Rust
+engine into `~/.simantic/engine-rust/<version>/` — checksum-verified
+against the public release manifest. Nothing else to install. `simantic install` fetches it up front, along
 with the `sim` binary if you also want the command-line tool.
 
 A Simantic account (`simantic auth`) is needed for one thing: resolving MCU
@@ -65,6 +66,24 @@ functions. See
 
 One-shot runs ("run 5 s, give me the transcript") are `run_firmware(...)`.
 
+## Pick your engine
+
+`Sim` runs on either of two engines, both hosted in your process, selected
+per simulation:
+
+```python
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                  # Renode engine (default)
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # Simantic's Rust engine
+```
+
+The script is the same; only the engine changes. The Rust engine is a
+single small extension module (fetched on first use, like the Renode
+engine), runs one machine, and is considerably faster. What it does not do
+yet — multi-machine scenarios, network services, scripted peers, CAN/radio
+injection, RTOS thread views — raises `simantic.NotSupported` naming the
+gap rather than silently doing nothing. The capability table both engines
+are ticked against is [simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
+
 ## Using it from pytest (optional)
 
 `Sim` needs no plugin — construct it inside any test. If you also keep
@@ -85,6 +104,34 @@ missed — rather than a Python traceback.
 Tests that cannot run in the current environment skip rather than fail — a
 missing binary or an unconfigured server. A red run means a
 simulation ran and disagreed with its expectations.
+
+### The `sim` fixture
+
+For hand-written tests — many assertions against one running machine — take the
+`sim` fixture. It drives the engine **in-process**, so engine start-up is paid
+once per worker rather than once per test, and it closes every machine it made
+when the test ends.
+
+```python
+def test_timer_irq_fires(sim):
+    s = sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")
+    s.expect("fired=1", timeout=8)
+    s.expect("RESULT: PASS", timeout=8)
+```
+
+`--sim-backend=renode|rust|both` picks the engine; `both` runs each test on each
+and names the engine in the test id. Anything the chosen backend cannot do
+skips with the reason rather than failing, so one suite can target both and
+report honestly what each covers. When a test fails, the UART transcript is
+attached to the report.
+
+**Budget your check-ins on the Renode backend.** Every hand-off between Python
+and the engine costs ~400–800 µs there, because resuming rendezvouses with
+Renode's time-source dispatcher threads — reading is free, it is the
+pause/resume that is not. Prefer `expect()`, which crosses once, over a poll
+loop that crosses per millisecond: the same test written the chatty way runs
+about 10× slower. On the Rust backend the same hand-off is ~1 µs and you can
+poll freely.
 
 ## Library
 

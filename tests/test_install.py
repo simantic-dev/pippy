@@ -399,3 +399,38 @@ def test_engine_dir_explains_when_no_release_is_reachable(home, monkeypatch):
     monkeypatch.setattr(install, "install_engine", lambda **kw: (_ for _ in ()).throw(install.InstallError("offline")))
     with pytest.raises(engine.EngineNotFound, match="could not fetch the engine: offline"):
         engine.engine_dir()
+
+
+# -- the Rust engine ----------------------------------------------------------
+
+RUST_MANIFEST = {
+    "version": "0.3.0",
+    "artifacts": {
+        "engine-rust-osx-arm64": {"url": "https://releases.example/r.whl", "sha256": None},
+        "engine-rust-linux-x64": {"url": "https://releases.example/r.whl", "sha256": None},
+    },
+}
+
+
+def test_install_rust_engine_unpacks_the_wheel_under_a_version_dir(home, monkeypatch):
+    monkeypatch.setattr(install, "fetch_rust_manifest", lambda channel=None: RUST_MANIFEST)
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip(
+        {"simantic_rust.abi3.so": b"\x7fELF", "simantic_rust-0.3.0.dist-info/METADATA": b""}))
+    monkeypatch.setattr(install, "current_rid", lambda: "osx-arm64")
+    target = install.install_rust_engine()
+    assert target == install.rust_engine_root() / "0.3.0"
+    assert install.is_rust_engine(target)
+    assert install.installed_rust_engine() == target
+
+
+def test_rust_manifest_is_its_own_product(monkeypatch):
+    seen = []
+
+    def capture(request, **k):
+        seen.append(request.full_url)
+        raise install.urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", capture)
+    with pytest.raises(install.InstallError):
+        install.fetch_rust_manifest()
+    assert seen[0].endswith("/pyrite/latest.json")

@@ -154,3 +154,135 @@ def firmware():
     except BinaryNotFound as exc:
         pytest.skip(str(exc))
     return run_firmware
+
+
+# --- the in-process test surface -------------------------------------------
+#
+# The fixtures above run a whole manifest through the `sim` binary: one
+# subprocess, and with it ~3 s of engine start-up, per fixture. That is the
+# right shape for a manifest, which is one coarse pass/fail.
+#
+# Hand-written tests are the other shape: many assertions against one running
+# machine. For those, `sim` below drives the engine *in-process*, so start-up is
+# paid once per worker instead of once per test.
+#
+# One discipline this surface exists to encode (measured; see
+# docs/competitors/simantic-py-review-vs-pyrenode3.md §1b): on the Renode
+# backend every hand-off between Python and the engine costs ~400-800 us,
+# because resuming rendezvouses with Renode's time-source dispatcher threads.
+# Reading is free -- it is the pause/resume that is not. So prefer `expect()`,
+# which crosses once, over a poll loop that crosses per millisecond. On the
+# Rust backend the same hand-off is ~1 us and the discipline does not apply.
+
+BACKEND_OPTION = "--sim-backend"
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("simantic")
+    group.addoption(
+        BACKEND_OPTION,
+        default="renode",
+        choices=["renode", "rust", "both"],
+        help="engine the `sim` fixture drives; 'both' runs each test on each.",
+    )
+
+
+def pytest_generate_tests(metafunc):
+    """`both` becomes one test item per backend, so failures name the engine."""
+    if "sim_backend" not in metafunc.fixturenames:
+        return
+    choice = metafunc.config.getoption(BACKEND_OPTION)
+    backends = ["renode", "rust"] if choice == "both" else [choice]
+    metafunc.parametrize("sim_backend", backends, scope="session")
+
+
+@pytest.fixture(scope="session")
+def sim_backend(request):
+    """The engine under test. Parametrized by --sim-backend=both."""
+    return request.config.getoption(BACKEND_OPTION)
+
+
+@pytest.fixture(scope="session")
+def _sim_engine(sim_backend):
+    """Load the engine once per worker, before any test is timed.
+
+    Without this the first test in a process absorbs the whole start-up cost
+    and reads as mysteriously slow; with it, start-up is attributed to the
+    session where it belongs. Also turns a missing engine into one clear skip
+    rather than a failure per test.
+    """
+    from . import engine
+
+    try:
+        engine.load_rust() if sim_backend == "rust" else engine.load()
+    except engine.EngineNotFound as exc:
+        pytest.skip(f"no {sim_backend} engine: {exc}")
+    return sim_backend
+
+
+@pytest.fixture
+def sim(request, sim_backend, _sim_engine):
+    """Factory for an in-process simulation, closed when the test ends.
+
+        def test_timer_fires(sim):
+            s = sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")
+            s.expect("RESULT: PASS", timeout=8)
+
+    Anything the chosen backend cannot do skips rather than fails, so one suite
+    can run on both engines and report honestly what each covers. On failure the
+    UART transcript is attached to the report -- what the firmware printed is
+    almost always the useful evidence, and it is gone once the session closes.
+    """
+    from .session import Sim
+    from ._rust import NotSupported
+
+    made = []
+
+    def make(**kwargs):
+        kwargs.setdefault("backend", sim_backend)
+        try:
+            s = Sim(**kwargs)
+        except NotSupported as exc:
+            pytest.skip(str(exc))
+        made.append(s)
+        return s
+
+    yield make
+
+    failed = getattr(request.node, "_sim_failed", False)
+    for s in made:
+        if failed:
+            try:
+                request.node.add_report_section(
+                    "call", f"UART ({s.backend})", s.read_uart(from_start=True)
+                )
+            except Exception:
+                pass
+        s.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    """A capability the chosen backend lacks is a skip, not a failure.
+
+    Scoped to tests that take the `sim` fixture, so this never reinterprets an
+    unrelated error. It is what lets one suite run on both engines and report
+    what each actually covers instead of a wall of red on the narrower one.
+    """
+    if "sim" not in getattr(item, "fixturenames", ()):
+        yield
+        return
+    from ._rust import NotSupported
+
+    outcome = yield
+    exc = outcome.excinfo
+    if exc is not None and issubclass(exc[0], NotSupported):
+        outcome.force_exception(pytest.skip.Exception(str(exc[1])))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Let the `sim` fixture's teardown know whether the test failed."""
+    report = (yield).get_result()
+    if report.when == "call" and report.failed:
+        item._sim_failed = True
