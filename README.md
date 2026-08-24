@@ -2,7 +2,7 @@
   <img src="https://simantic.dev/simantic_logo_4_full_transparent.png" alt="Simantic" width="340">
 </p>
 
-<h3 align="center">Run your firmware without the board.</h3>
+<h3 align="center">Test your firmware without a board.</h3>
 
 <p align="center">
   <a href="https://pypi.org/project/simantic/"><img src="https://img.shields.io/pypi/v/simantic.svg" alt="PyPI"></a>
