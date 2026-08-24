@@ -105,6 +105,34 @@ Tests that cannot run in the current environment skip rather than fail — a
 missing binary or an unconfigured server. A red run means a
 simulation ran and disagreed with its expectations.
 
+### The `sim` fixture
+
+For hand-written tests — many assertions against one running machine — take the
+`sim` fixture. It drives the engine **in-process**, so engine start-up is paid
+once per worker rather than once per test, and it closes every machine it made
+when the test ends.
+
+```python
+def test_timer_irq_fires(sim):
+    s = sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")
+    s.expect("fired=1", timeout=8)
+    s.expect("RESULT: PASS", timeout=8)
+```
+
+`--sim-backend=renode|rust|both` picks the engine; `both` runs each test on each
+and names the engine in the test id. Anything the chosen backend cannot do
+skips with the reason rather than failing, so one suite can target both and
+report honestly what each covers. When a test fails, the UART transcript is
+attached to the report.
+
+**Budget your check-ins on the Renode backend.** Every hand-off between Python
+and the engine costs ~400–800 µs there, because resuming rendezvouses with
+Renode's time-source dispatcher threads — reading is free, it is the
+pause/resume that is not. Prefer `expect()`, which crosses once, over a poll
+loop that crosses per millisecond: the same test written the chatty way runs
+about 10× slower. On the Rust backend the same hand-off is ~1 µs and you can
+poll freely.
+
 ## Library
 
 The one-shot runner:
