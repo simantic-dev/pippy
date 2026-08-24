@@ -302,7 +302,22 @@ def rust_engine_root() -> Path:
 
 
 def is_rust_engine(d: Path) -> bool:
-    return d.is_dir() and any(p.name.startswith("simantic_rust.") for p in d.iterdir())
+    """True when `d` holds an importable `simantic_rust`.
+
+    maturin ships the extension as a package: `simantic_rust/__init__.py`
+    beside `simantic_rust/simantic_rust.abi3.so`. A bare `simantic_rust.<ext>`
+    laid out flat is equally importable. Accept either, because the only thing
+    that matters here is whether putting `d` on `sys.path` makes the module
+    import; matching one layout silently re-downloaded the engine on every
+    process, since the managed copy was never recognised.
+    """
+    if not d.is_dir():
+        return False
+    return any(
+        p.name.startswith("simantic_rust.")
+        or (p.name == "simantic_rust" and (p / "__init__.py").exists())
+        for p in d.iterdir()
+    )
 
 
 def installed_rust_engine() -> Path | None:
