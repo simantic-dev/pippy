@@ -434,3 +434,32 @@ def test_rust_manifest_is_its_own_product(monkeypatch):
     with pytest.raises(install.InstallError):
         install.fetch_rust_manifest()
     assert seen[0].endswith("/pyrite/latest.json")
+
+
+# -- engine layouts ----------------------------------------------------------
+#
+# maturin ships the Rust engine as a package, not a bare .so. Recognising only
+# the flat shape looked harmless (the import still worked once the directory was
+# on sys.path) but meant the managed copy was never found, so every process
+# re-downloaded the wheel.
+
+
+def test_a_maturin_package_layout_is_recognised(tmp_path):
+    """What `maturin build` actually produces, verified against a real wheel."""
+    pkg = tmp_path / "simantic_rust"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("from .simantic_rust import *\n")
+    (pkg / "simantic_rust.abi3.so").write_bytes(b"\x7fELF")
+    (tmp_path / "simantic_rust-0.3.0.dist-info").mkdir()
+    assert install.is_rust_engine(tmp_path)
+
+
+def test_a_flat_extension_is_recognised(tmp_path):
+    (tmp_path / "simantic_rust.abi3.so").write_bytes(b"\x7fELF")
+    assert install.is_rust_engine(tmp_path)
+
+
+def test_a_directory_without_the_module_is_not(tmp_path):
+    (tmp_path / "simantic_rust-0.3.0.dist-info").mkdir()
+    (tmp_path / "simantic_rust").mkdir()          # no __init__.py: not importable
+    assert not install.is_rust_engine(tmp_path)
