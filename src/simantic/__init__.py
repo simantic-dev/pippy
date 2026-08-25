@@ -29,7 +29,7 @@ from .engine import EngineNotFound, engine_dir, rust_engine_dir
 from .session import BACKENDS, ExpectTimeout, Match, Sim
 from ._rust import NotSupported
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     # firmware
