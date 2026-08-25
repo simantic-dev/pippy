@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://simantic.dev/simantic_logo_4_full_transparent.png">
-    <img src="https://simantic.dev/simantic_logo_4_inverted_full_transparent.png" alt="Simantic" width="340">
-  </picture>
+  <img src="https://simantic.dev/simantic_logo_4_full.png" alt="Simantic" width="340">
 </p>
 
 <h3 align="center">Test your firmware without a board.</h3>
