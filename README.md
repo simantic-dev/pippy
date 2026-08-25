@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://simantic.dev/simantic_logo_4_full_transparent.png" alt="Simantic" width="340">
+  <img src="https://simantic.dev/simantic_logo_4_full.png" alt="Simantic" width="340">
 </p>
 
 <h3 align="center">Test your firmware without a board.</h3>
