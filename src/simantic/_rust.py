@@ -165,9 +165,18 @@ class RustBackend:
                 # used", but it is never invented.
                 t["stack"] = {"base": base, "sizeBytes": size, "peakUsedBytes": peak}
             threads.append(t)
-        # Never truncated here: the adapter walks the kernel's own list and
-        # returns all of it. The key exists so the two backends agree.
-        return {"rtos": rtos, "threads": threads, "truncated": False}
+        # `truncated` is the adapter's own signal, not a constant. Without
+        # the kernel's all-threads list there is no way to see anything but
+        # what is currently running, and a one-entry list presented as
+        # complete is the worst of the three possible answers.
+        #
+        # Zephyr needs CONFIG_THREAD_MONITOR for that list to exist (and
+        # CONFIG_THREAD_NAME for names, CONFIG_DEBUG_THREAD_INFO for the
+        # published offsets, CONFIG_INIT_STACKS for stack high-water). A
+        # stock build has none of them, so this is the common case, not the
+        # exotic one.
+        return {"rtos": rtos, "threads": threads,
+                "truncated": not self._s.task_enumeration_available()}
 
     def heap(self, machine: str | None):
         h = self._s.heap()

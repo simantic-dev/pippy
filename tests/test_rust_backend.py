@@ -102,6 +102,9 @@ class FakeSession:
     def rtos_name(self):
         return None
 
+    def task_enumeration_available(self):
+        return False
+
     def tasks(self):
         return None
 
@@ -127,6 +130,9 @@ class KernelSession(FakeSession):
 
     def rtos_name(self):
         return "FreeRTOS"
+
+    def task_enumeration_available(self):
+        return True
 
     def tasks(self):
         # (id, name, state, priority, core, base, size, peak)
@@ -348,3 +354,31 @@ def test_a_riscv_vector_is_not_given_an_arm_name():
     assert _vector_name(15) == "SysTick"
     assert _vector_name(16) == "IRQ0"
     assert _vector_name(7) == ""
+
+
+class UnenumerableSession(KernelSession):
+    """A kernel whose all-threads list the build left out -- Zephyr without
+    CONFIG_THREAD_MONITOR. Only the running thread is ever visible."""
+
+    def rtos_name(self):
+        return "Zephyr"
+
+    def task_enumeration_available(self):
+        return False
+
+    def tasks(self):
+        return [(0x2000_0080, "", "running", 15, 0, 0x2000_0c40, 320, None)]
+
+
+def test_a_partial_thread_list_is_reported_as_truncated(fake_engine, monkeypatch):
+    """The failure this guards against is silent, not loud: without
+    CONFIG_THREAD_MONITOR the adapter can only see the running thread, and a
+    one-entry list marked complete reads as "this firmware has one thread".
+    Measured on the irq-timer fixture, three threads had actually run."""
+    repl, elf = fake_engine
+    monkeypatch.setattr(sys.modules["simantic_rust"], "Session", UnenumerableSession)
+    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+        snap = sim.threads()
+        assert snap["rtos"] == "Zephyr"
+        assert len(snap["threads"]) == 1
+        assert snap["truncated"] is True
