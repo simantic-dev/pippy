@@ -32,12 +32,14 @@ optionally with an `overlay=` fragment. Scenario machines accept the same
 keys. (`$SIMANTIC_MCU_LIB` switches `mcu=` to a local model library for
 model development.)
 
-`backend=` picks the engine, both hosted in-process: `"renode"` (the
-default; `Simantic.Core`, see `engine.py`) or `"rust"` (`simantic_rust`, the
-pure-Rust engine — one machine, faster, and missing some capabilities that
-raise `NotSupported` rather than silently no-op; simantic-core#183 is the
-table). A script written against one runs unchanged on the other wherever
-both tick. This class adds vocabulary, not semantics.
+`backend=` picks the engine: `"renode"` (the default; `Simantic.Core`, hosted
+in-process, see `engine.py`), `"rust"` (`simantic_rust`, also in-process — one
+machine, faster, and missing some capabilities that raise `NotSupported`
+rather than silently no-op; simantic-core#183 is the table), or `"cloud"`
+(the engine runs on Simantic's servers — nothing to install, see `_cloud.py`;
+needs `simantic auth` credentials). A script written against one runs
+unchanged on the others wherever all tick. This class adds vocabulary, not
+semantics.
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ from .engine import load
 from .fixtures import MCU_LIB_ENV, platform_path
 from .mcu import SimError
 
-BACKENDS = ("renode", "rust")
+BACKENDS = ("renode", "rust", "cloud")
 
 
 class ExpectTimeout(AssertionError):
@@ -184,6 +186,14 @@ class Sim:
             from ._rust import RustBackend
 
             self._b = RustBackend(
+                machines, base=self._base, media=scenario.get("media"),
+                services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
+                trace_symbols=trace_symbols, trace_interrupts=trace_interrupts, engine_dir=engine_dir,
+            )
+        elif backend == "cloud":
+            from ._cloud import CloudBackend
+
+            self._b = CloudBackend(
                 machines, base=self._base, media=scenario.get("media"),
                 services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
                 trace_symbols=trace_symbols, trace_interrupts=trace_interrupts, engine_dir=engine_dir,

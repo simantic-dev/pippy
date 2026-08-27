@@ -68,11 +68,12 @@ Already have the `sim` binary? Put it on PATH or point `$SIMANTIC_SIM` at it.
 
 ## Pick your engine
 
-The same script runs on either engine. You choose per simulation:
+The same script runs on any engine. You choose per simulation:
 
 ```python
-Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                  # Renode engine, the default
-Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # our Rust engine
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                   # Renode engine, the default
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")   # our Rust engine
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="cloud")  # runs on our servers, nothing installed
 ```
 
 The Rust engine is a small extension module, runs one machine, and is
@@ -80,6 +81,14 @@ considerably faster. Anything it cannot do yet, such as multi machine scenarios
 or CAN and radio injection, raises `simantic.NotSupported` and names the gap
 instead of quietly doing nothing. You can follow what each engine covers in
 [simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
+
+`backend="cloud"` runs the whole simulation on Simantic's servers: no engine
+binary, no pythonnet, nothing to install or download — just `pip install
+simantic`, `simantic auth`, and go. Your ELF (and platform file, if you
+supply one) are uploaded once when the session starts; every call after that
+— `send`, `run_for`, `expect`, `read_memory`, ... — is a short request over
+the network instead of an in-process call. Point it at a non-default
+deployment with `$SIMANTIC_CLOUD_URL`.
 
 ## Testing with pytest
 
