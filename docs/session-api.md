@@ -106,3 +106,6 @@ an agent that needs a loop, is better served by code: the loop runs in the
 engine's process, only the conclusion enters the transcript, and the script
 becomes a fixture. `Sim` is that path; the MCP servers remain for interactive
 poking and are expected to shrink to a thin adapter over it.
+
+See [`unified-surface.md`](unified-surface.md) for where the CLI dispatch and
+an eventual unified MCP server's client-side install are expected to land.

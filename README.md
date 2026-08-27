@@ -81,6 +81,10 @@ or CAN and radio injection, raises `simantic.NotSupported` and names the gap
 instead of quietly doing nothing. You can follow what each engine covers in
 [simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
 
+This `backend=` dispatch is meant to be the one place engine choice happens —
+see [`docs/unified-surface.md`](docs/unified-surface.md) for where the CLI and
+MCP install are expected to grow the same logic.
+
 ## Testing with pytest
 
 Take the `sim` fixture and write ordinary tests:
