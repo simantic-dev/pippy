@@ -128,6 +128,22 @@ run = simantic.run_firmware("build/zephyr.elf", mcu="STM32F401RE",
 assert run.passed, run.failure_report()
 ```
 
+## Inspecting without running anything
+
+A few calls need no engine and don't run firmware — for authoring platforms
+or picking a model before you spend a session on it:
+
+```python
+simantic.list_models()                       # MCU models your account can resolve
+simantic.elf_symbols("build/zephyr.elf")      # {name: address}, from the ELF's symtab
+simantic.list_platforms("mcu-lib/models")     # .repl/.replx files under a directory
+simantic.read_platform("board.repl")          # its raw text
+simantic.validate_platform("board.repl")      # parses it, builds every peripheral, reports what would load
+```
+
+`validate_platform` rebuilds process-wide engine state, so don't call it
+while a `backend="renode"` `Sim` session is open in the same process.
+
 ## Telemetry
 
 When you are signed in, we count the shape of a pytest session (how many tests

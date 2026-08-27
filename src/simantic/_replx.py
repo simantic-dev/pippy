@@ -25,6 +25,7 @@ from .fixtures import MCU_LIB_ENV, platform_path
 from .mcu import SimError
 
 MCU_DETAILS_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/get-mcu-details"
+MCU_LIST_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/list-supported-mcus"
 
 _PLACEHOLDER = re.compile(r"\{\{([^}]*)\}\}")
 _ARITHMETIC = re.compile(r"[0-9. */+()-]+")
@@ -92,6 +93,27 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
     cached.parent.mkdir(parents=True, exist_ok=True)
     cached.write_text(json.dumps({"model": mcu, "replx": replx, "deprecated": bool(details.get("deprecated"))}))
     return replx
+
+
+def list_models() -> list[str]:
+    """MCU model names `mcu=`/`sim --mcu` can resolve, from your account's
+    entitlements. Mirrors the MCP server's `list_models` tool."""
+    try:
+        credentials = auth.load()
+    except auth.NotAuthenticated as exc:
+        raise SimError(f"list_models needs credentials: {exc}") from None
+    request = urllib.request.Request(MCU_LIST_URL, headers={"Authorization": f"Bearer {credentials.api_key}"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise SimError(f"list_models: backend returned HTTP {exc.code}") from None
+    except urllib.error.URLError as exc:
+        raise SimError(f"cannot reach the model backend: {exc.reason}") from None
+    models = body.get("models")
+    if not isinstance(models, list):
+        raise SimError("list_models: backend response had no 'models' array")
+    return models
 
 
 def platform_text(*, repl: Path | None, mcu: str | None, overlay: Path | None) -> str:

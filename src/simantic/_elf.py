@@ -7,13 +7,25 @@ here — the same answer, from the same file.
 
 from __future__ import annotations
 
+import os
 import struct
+from pathlib import Path
 
 SHT_SYMTAB = 2
 STT_FUNC = 2
 
 
+def symbols_in_file(path: str | os.PathLike[str]) -> dict[str, int]:
+    """Symbol addresses in the ELF at `path` — same table `Sim.symbol()`
+    reads on the Rust backend, exposed standalone: no engine, no running
+    firmware. Mirrors the MCP server's `elf_symbols` tool."""
+    return symbols(Path(path).read_bytes())
+
+
 def symbols(elf: bytes) -> dict[str, int]:
+    # 32-bit LE only (STM32/nRF/ESP32-C class); no 64-bit ELF class here yet
+    # (RV64, Cortex-A64) — MCP's elf_symbols uses ELFSharp and has no such
+    # limit, so this is a real gap, not a design choice.
     if elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 1:
         raise ValueError("only 32-bit little-endian ELF images are supported")
     (shoff,) = struct.unpack_from("<I", elf, 0x20)

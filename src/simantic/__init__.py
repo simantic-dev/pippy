@@ -16,6 +16,7 @@ Installing this package also registers a pytest plugin that turns `test.yaml`
 fixture manifests into individually addressable pytest items.
 """
 
+from ._elf import symbols_in_file as elf_symbols
 from ._locate import BinaryNotFound
 from .fixtures import (
     Manifest,
@@ -26,6 +27,8 @@ from .fixtures import (
 from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
 from .engine import EngineNotFound, engine_dir, rust_engine_dir
+from .platforms import list_platforms, read_platform, validate_platform
+from ._replx import list_models
 from .session import BACKENDS, ExpectTimeout, Match, Sim
 from ._rust import NotSupported
 
@@ -51,6 +54,12 @@ __all__ = [
     "BACKENDS",
     "engine_dir",
     "rust_engine_dir",
+    # static inspection — no engine, no running firmware
+    "elf_symbols",
+    "list_platforms",
+    "read_platform",
+    "validate_platform",
+    "list_models",
     # shared
     "BinaryNotFound",
 ]
