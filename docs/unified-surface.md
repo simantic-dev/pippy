@@ -25,9 +25,13 @@ CLI grows its own copy.
 
 Two MCP servers exist today, one per engine, and neither is reachable from
 this package: `pyrite-mcp` (Rust engine, active) and the Renode engine's MCP
-server (stale). Per [`session-api.md`](session-api.md#why-not-mcp), the MCP
-servers are expected to shrink into thin adapters over `Sim` as that
-unification happens.
+server (stale). The two engines have genuinely different capabilities — e.g.
+Renode's `gdb_*` control plane and multi-machine/CAN/radio scenarios don't
+exist on the Rust side — so unifying them isn't one server absorbing the
+other's tools; it's a `Sim(backend=...)`-shaped front door that dispatches
+each call to whichever engine implements it. Per
+[`session-api.md`](session-api.md#why-not-mcp), the MCP servers are expected
+to shrink into thin adapters over `Sim` as that dispatch layer takes shape.
 
 This package is the natural client-side install point for whichever unified
 MCP server results, for the same reason it already installs the engines
