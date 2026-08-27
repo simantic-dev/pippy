@@ -187,9 +187,17 @@ class RustBackend:
         # largestFreeBlockBytes/fragmentationRatio are deliberately absent
         # rather than guessed: this allocator view has no free-list walk, and
         # a fabricated fragmentation number is worse than a missing one.
+        #
+        # `minimum_free` is None when the allocator keeps no low-water mark to
+        # read. ESP-IDF's multi_heap maintains one; Zephyr's sys_heap does not
+        # -- its chunk chain describes the heap as it is now and records no
+        # history, so a peak is refused rather than approximated from the
+        # current state. Both keys stay present and go None together, so a
+        # caller can tell "not tracked" from "nothing used".
+        peak = None if minimum_free is None else pool - minimum_free
         return {"allocator": allocator, "arenaSizeBytes": pool, "freeBytes": free,
                 "usedBytes": pool - free, "minimumFreeBytes": minimum_free,
-                "peakUsedBytes": pool - minimum_free, "regions": regions}
+                "peakUsedBytes": peak, "regions": regions}
 
     # -- pyrite-only observation ------------------------------------------
     #

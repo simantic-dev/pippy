@@ -65,8 +65,97 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 | `symbol(name)` | ELF symbol address |
 | `threads()` / `heap()` | RTOS thread snapshot / heap report, when recognised |
 
+See [Debugging what the firmware is doing](#debugging-what-the-firmware-is-doing)
+for the shape of `threads()` and `heap()`, and for the observers the Rust
+backend adds beyond this table.
+
 Every observer takes `machine=` in a scenario; the constructor's `machine=`
 and `uart=` are the defaults.
+
+## Debugging what the firmware is doing
+
+Everything here is read out of guest memory or out of logs the engine already
+fills. Nothing halts the machine, nothing perturbs timing, and no firmware
+instrumentation is required — so an assertion made here is an assertion about
+the run that actually happened.
+
+Two rules run through the whole surface, and they are worth stating once:
+
+- **Layout comes from the image, never from a table in our source.** Struct
+  offsets are read from the ELF's own DWARF, so a kernel option that moves a
+  member moves it here too. The alternative — a constant probed once against
+  one build — reads a neighbouring member on the next build and reports a
+  plausible number, which is worse than reporting nothing.
+- **What the target does not record is reported as `None`, not approximated.**
+  A missing key is a fact about the build; an invented one is a bug you find
+  much later.
+
+### `threads()` — the RTOS thread snapshot
+
+```python
+{"rtos": "Zephyr",
+ "threads": [{"id": ..., "name": "led1", "state": "ready", "priority": 5,
+              "core": 0,
+              "stack": {"base": ..., "sizeBytes": 512, "peakUsedBytes": 128}}],
+ "truncated": False}
+```
+
+`None` when no kernel is recognised — a bare-metal image, or one whose symbols
+were stripped.
+
+`truncated` is the adapter's own signal, not a constant. Without the kernel's
+all-threads list there is no way to see anything but the thread currently
+running, and a one-entry list presented as complete is the worst available
+answer. On Zephyr the list needs `CONFIG_THREAD_MONITOR`, names need
+`CONFIG_THREAD_NAME`, the published offsets need `CONFIG_DEBUG_THREAD_INFO`,
+and `stack.peakUsedBytes` needs `CONFIG_INIT_STACKS` (unpainted stacks have no
+high-water mark to find, so the key is present and `None`). A stock build has
+none of them — `truncated: True` is the common case, not the exotic one.
+
+This is one of the clearest places where a simulator beats a probe: on a
+no-MMU MCU every thread shares one address space, so trace hardware has no
+architectural context to observe and cannot see threads at all.
+
+### `heap()` — the allocator report
+
+```python
+{"allocator": "Zephyr sys_heap", "arenaSizeBytes": 4180,
+ "freeBytes": 3820, "usedBytes": 360,
+ "minimumFreeBytes": 3532, "peakUsedBytes": 648, "regions": 1}
+```
+
+`None` when no allocator is recognised. Two are:
+
+| allocator | recognised by | how the numbers are obtained |
+| --- | --- | --- |
+| `ESP-IDF heap_caps` | `registered_heaps` | walks the registered-region list and reads `multi_heap`'s own counters |
+| `Zephyr sys_heap` | `_system_heap` | walks the chunk chain structurally — needs no Kconfig and costs the target nothing |
+
+The Zephyr walk validates itself: a correct traversal lands *exactly* on the
+sentinel the kernel's own accounting loop terminates against. The chunk field
+width is a Kconfig predicate that is invisible in the image, so both widths are
+tried and only an exact landing is accepted. If neither lands, the heap reads
+as unrecognised rather than as a partial sum.
+
+`minimumFreeBytes` and `peakUsedBytes` are `None` together when the allocator
+keeps no low-water mark. ESP-IDF maintains one; Zephyr's chunk chain describes
+the heap as it is now and records no history, so the peak is refused rather
+than back-computed from current state. `largestFreeBlockBytes` and
+`fragmentationRatio` — present on the Renode backend — are absent here rather
+than guessed.
+
+### Rust-backend extras
+
+No Renode counterpart yet, so these hang off `sim._b` rather than `Sim`:
+
+| method | returns |
+| --- | --- |
+| `sim._b.switches()` | `[{t, core, task}]` — the context-switch timeline, from a non-halting watch on the kernel's current-thread pointer |
+| `sim._b.task_usage(start, end)` | `[{task, seconds, runs, longestRun}]` over a virtual-time window |
+| `sim._b.isr_usage(start, end)` | `{"vectors": [{exception, name, seconds, count, longest, maxDepth}], "threadSeconds": ...}` — works bare-metal too, with no kernel attached |
+
+`interrupts()` needs no flag on this backend: the exception hook is always on,
+so the log is there whether or not `trace_interrupts` was passed.
 
 ## Timing assertions and the quantum
 

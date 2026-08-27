@@ -146,7 +146,7 @@ class KernelSession(FakeSession):
         return [(0x2000_0100, 0.0015, 1, 0.0015), (0x2000_0200, 0.001, 1, 0.001)]
 
     def heap(self):
-        return ("esp_idf", 4000, 3500, 8192, 2)
+        return ("ESP-IDF heap_caps", 4000, 3500, 8192, 2)
 
 
 @pytest.fixture
@@ -327,10 +327,31 @@ def test_heap_reports_only_what_the_allocator_actually_tells_us(fake_engine, mon
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", KernelSession)
     with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
         h = sim.heap()
-        assert h["allocator"] == "esp_idf"
+        assert h["allocator"] == "ESP-IDF heap_caps"
         assert h["arenaSizeBytes"] == 8192 and h["freeBytes"] == 4000
         assert h["usedBytes"] == 4192 and h["peakUsedBytes"] == 4692
+        assert h["minimumFreeBytes"] == 3500
         assert "largestFreeBlockBytes" not in h
+
+
+def test_the_peak_is_none_when_the_allocator_keeps_no_low_water_mark(fake_engine, monkeypatch):
+    """Zephyr's `sys_heap` is walked structurally: the chunk chain describes the
+    heap as it is now and records no history. The peak is refused rather than
+    approximated from the current state, and it takes `minimumFreeBytes` with
+    it -- both keys stay present so "not tracked" is distinguishable from 0."""
+    repl, elf = fake_engine
+
+    class NoHistory(KernelSession):
+        def heap(self):
+            return ("Zephyr sys_heap", 3820, None, 4180, 1)
+
+    monkeypatch.setattr(sys.modules["simantic_rust"], "Session", NoHistory)
+    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+        h = sim.heap()
+        assert h["allocator"] == "Zephyr sys_heap"
+        assert h["arenaSizeBytes"] == 4180 and h["freeBytes"] == 3820
+        assert h["usedBytes"] == 360 and h["regions"] == 1
+        assert h["minimumFreeBytes"] is None and h["peakUsedBytes"] is None
 
 
 def test_switch_and_usage_windows_are_available(fake_engine, monkeypatch):
