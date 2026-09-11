@@ -28,13 +28,20 @@ Sim(scenario={...}, machine="c6", uart="uart0", cwd=fixture_dir)
 ```
 
 Scenario dicts use the `sim --scenario` schema verbatim: `machines`
-(`repl`/`mcu` + `overlay` + `elf`), `media` (BLE/CAN/Ethernet/UART buses),
-`networkServices` (scripted peers), `quantum`. Relative paths resolve against
-`cwd=` (default: the process cwd).
+(`repl`/`mcu` + `overlay` + `elf` + `symbolsElfPath`), `media` (BLE/CAN/Ethernet/UART
+buses), `networkServices` (scripted peers), `quantum`. Relative paths resolve
+against `cwd=` (default: the process cwd).
 
-`trace_symbols=[...]`, `trace_interrupts=True` and `show_logs=True` turn on the
-non-halting instrumentation; read it back with `symbol_trace()`, `interrupts()`
-and `logs()`.
+`symbols_elf=` (single-machine form) / `symbolsElfPath` (scenario machine
+entries — same key as the CLI's scenario YAML, so a scenario dict is
+copy-pasteable) attaches a companion ELF that carries debug symbols for a
+stripped image, e.g. a PlatformIO/IDF `firmware.elf` alongside a stripped
+flash container passed as `elf=`. It only changes what `symbol()` and RTOS
+introspection can resolve — the image that actually runs is still `elf=`.
+
+`trace_symbols=[...]`, `trace_memory=[...]`, `trace_interrupts=True` and
+`show_logs=True` turn on the non-halting instrumentation; read it back with
+`symbol_trace()`, `interrupts()` and `logs()`.
 
 ## Drive
 

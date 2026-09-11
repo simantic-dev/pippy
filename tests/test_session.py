@@ -54,3 +54,27 @@ def test_expect_timeout_is_assertion():
         with pytest.raises(ExpectTimeout) as exc:
             sim.expect("never printed by anything", timeout=2)
         assert isinstance(exc.value, AssertionError)
+
+
+@needs_engine
+def test_symbols_elf_single_machine():
+    """symbols_elf= reaches SessionMachine.SymbolsElfPath (simantic-core#307)
+    without upsetting the run. No stripped-image fixture is wired up here, so
+    the companion ELF is the image itself — a smoke test of the plumbing
+    (loading the same ELF's symbols twice isn't a real symbol-resolution
+    check), not a claim that a stripped image + a genuinely separate
+    companion ELF resolves symbols (verified manually against
+    sim-fixtures/build/zephyr/zephyr.elf stripped with arm-none-eabi-strip)."""
+    with Sim(elf=ELF, repl=REPL, uart=UART, symbols_elf=ELF) as sim:
+        m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
+        assert "PASS" in m
+
+
+@needs_engine
+def test_symbols_elf_path_in_scenario():
+    """symbolsElfPath in a scenario machine dict — same key as the CLI's
+    scenario YAML (simantic-cli#184), so a scenario dict stays copy-pasteable."""
+    scenario = {"machines": {"machine": {"repl": REPL, "elf": ELF, "symbolsElfPath": ELF}}}
+    with Sim(scenario=scenario, uart=UART) as sim:
+        m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
+        assert "PASS" in m
