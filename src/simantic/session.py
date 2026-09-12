@@ -140,7 +140,9 @@ class Sim:
         scenario: dict[str, Any] | None = None,
         machine: str | None = None,
         uart: str = "uart0",
+        symbols_elf: str | os.PathLike[str] | None = None,
         trace_symbols: list[str] = (),
+        trace_memory: list[str] = (),
         trace_interrupts: bool = False,
         show_logs: bool = False,
         cwd: str | os.PathLike[str] | None = None,
@@ -176,7 +178,8 @@ class Sim:
                 if "elf" not in m or ("repl" in m) == ("mcu" in m):
                     raise ValueError(f"machine {m['name']!r} needs elf and exactly one of repl/mcu")
         else:
-            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "overlay": overlay}]
+            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "overlay": overlay,
+                        "symbolsElfPath": symbols_elf}]
         scenario = scenario or {}
 
         telemetry.record(f"sdk.session.{backend}")
@@ -186,13 +189,14 @@ class Sim:
             self._b = RustBackend(
                 machines, base=self._base, media=scenario.get("media"),
                 services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
-                trace_symbols=trace_symbols, trace_interrupts=trace_interrupts, engine_dir=engine_dir,
+                trace_symbols=trace_symbols, trace_memory=trace_memory, trace_interrupts=trace_interrupts,
+                engine_dir=engine_dir,
             )
         else:
             self._b = _RenodeBackend(
                 machines, base=self._base, work=self._work, media=scenario.get("media"),
                 services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
-                trace_symbols=trace_symbols, trace_interrupts=trace_interrupts,
+                trace_symbols=trace_symbols, trace_memory=trace_memory, trace_interrupts=trace_interrupts,
                 show_logs=show_logs, engine_dir=engine_dir,
             )
         self.machines: list[str] = list(self._b.machines)
@@ -377,7 +381,7 @@ class _RenodeBackend:
                 "interrupts": ("ReadInterrupts", _interrupt), "symbol_trace": ("ReadSymbolTrace", _symbol_trace)}
 
     def __init__(self, machines: list[dict], *, base: Path, work: Path, media, services, quantum,
-                 trace_symbols, trace_interrupts, show_logs, engine_dir):
+                 trace_symbols, trace_memory, trace_interrupts, show_logs, engine_dir):
         self._base, self._work = base, work
         ns = load(engine_dir)
         spec = ns.SessionSpec()
@@ -385,8 +389,11 @@ class _RenodeBackend:
         spec.ShowBackendLogs = show_logs
         for sym in trace_symbols:
             spec.TraceSymbols.Add(sym)
+        for region in trace_memory:
+            spec.TraceMemory.Add(region)
         for m in machines:
-            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"])
+            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"],
+                              m.get("symbolsElfPath"))
         for med in media or []:
             sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
             sm.Strict = bool(med.get("strict", False))
@@ -407,7 +414,7 @@ class _RenodeBackend:
             raise SimError(f"could not start the simulation: {exc}") from exc
         self.machines = list(self._session.Machines)
 
-    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf) -> None:
+    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf, symbols_elf) -> None:
         """Platform file → AddMachine; model name → the local model library when
         $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
         (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
@@ -415,14 +422,15 @@ class _RenodeBackend:
         if repl is not None:
             if overlay is not None:
                 raise ValueError("overlay= applies to mcu=, not repl=")
-            spec.AddMachine(name, str(self._base / repl), elf_path)
-            return
-        if os.environ.get(MCU_LIB_ENV):
+            sm = spec.AddMachine(name, str(self._base / repl), elf_path)
+        elif os.environ.get(MCU_LIB_ENV):
             platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
-            spec.AddMachine(name, str(platform), elf_path)
-            return
-        fragment = (self._base / overlay).read_text() if overlay else None
-        spec.AddModel(name, mcu, elf_path, fragment)
+            sm = spec.AddMachine(name, str(platform), elf_path)
+        else:
+            fragment = (self._base / overlay).read_text() if overlay else None
+            sm = spec.AddModel(name, mcu, elf_path, fragment)
+        if symbols_elf:
+            sm.SymbolsElfPath = str(self._base / symbols_elf)
 
     def _service_args(self, args: str) -> str:
         # A script path is the common case; make it absolute against cwd=.

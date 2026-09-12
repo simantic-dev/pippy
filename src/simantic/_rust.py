@@ -25,14 +25,16 @@ class NotSupported(SimError):
 
 class RustBackend:
     def __init__(self, machines: list[dict], *, base: Path, media, services, quantum,
-                 trace_symbols, trace_interrupts, engine_dir):
+                 trace_symbols, trace_memory, trace_interrupts, engine_dir):
         if len(machines) != 1:
             raise NotSupported("backend='rust' runs one machine; multi-machine scenarios need backend='renode'")
         if media or services:
             raise NotSupported("backend='rust' has no media or network services yet (simantic-core#183)")
-        if trace_symbols or trace_interrupts:
-            raise NotSupported("backend='rust' has no symbol/interrupt tracing yet (simantic-core#183)")
+        if trace_symbols or trace_memory or trace_interrupts:
+            raise NotSupported("backend='rust' has no symbol/memory/interrupt tracing yet (simantic-core#183)")
         m = machines[0]
+        if m.get("symbolsElfPath"):
+            raise NotSupported("backend='rust' has no symbols_elf support yet (simantic-core#183)")
         self.machines = [m["name"]]
         self._elf = (base / m["elf"]).read_bytes()
         repl = base / m["repl"] if m.get("repl") else None
