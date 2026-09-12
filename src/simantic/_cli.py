@@ -1,4 +1,5 @@
-"""The `simantic` command: authenticate, install binaries, report status.
+"""The `simantic` command: authenticate, install binaries, report status,
+and build bootable ESP32 images.
 
 Thin by design. It exists so `pip install simantic` is followed by two
 obvious commands rather than a documentation hunt, not to become a third
@@ -11,7 +12,7 @@ import argparse
 import getpass
 import sys
 
-from . import auth, install, telemetry
+from . import auth, esp_image, install, telemetry
 from ._locate import BinaryNotFound, locate
 from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
@@ -81,6 +82,40 @@ def _status(args) -> int:
     return 0
 
 
+def _parse_part(text: str) -> tuple[int, bytes]:
+    offset, sep, path = text.partition(":")
+    if not sep or not path:
+        raise esp_image.EspImageError(f"--part expects OFFSET:PATH, e.g. 0x10000:firmware.bin (got {text!r})")
+    try:
+        return int(offset, 0), open(path, "rb").read()
+    except ValueError:
+        raise esp_image.EspImageError(f"--part offset {offset!r} is not a number") from None
+    except OSError as exc:
+        raise esp_image.EspImageError(f"--part {path}: {exc.strerror}") from None
+
+
+def _esp_image(args) -> int:
+    size = esp_image.parse_size(args.flash_size) if args.flash_size else None
+    if args.flash:
+        flash = esp_image._read(args.flash, "flash image")
+        if size is not None:
+            flash = esp_image.merge_flash([(0, flash)], size=size)
+    else:
+        flash = esp_image.merge_flash([_parse_part(p) for p in args.part], size=size)
+    rom = args.rom
+    if rom is None:
+        lay = esp_image.layout(args.chip)
+        print(f"using Espressif's {lay.chip} mask ROM from {lay.source.url} (cached after the first download)")
+    elf = esp_image.build_image(args.chip, flash, out=args.out, rom=rom)
+    print(f"wrote {args.out}: {len(elf)} bytes, flash {len(flash):#x} bytes; run it with `sim --elf {args.out}`")
+    return 0
+
+
+def _esp_rom(args) -> int:
+    print(esp_image.fetch_rom(args.chip, force=args.force))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # prog is left to argparse so usage reflects however it was invoked:
     # `simantic`, the short `smtc`, or `python -m simantic`.
@@ -117,6 +152,34 @@ def main(argv: list[str] | None = None) -> int:
         func=_status
     )
 
+    p_img = sub.add_parser(
+        "esp-image",
+        help="build a bootable ESP32 image ELF (mask ROM + flash) for `sim --elf`",
+    )
+    p_img.add_argument("--chip", required=True, help=f"one of {', '.join(esp_image.chips())}")
+    src = p_img.add_mutually_exclusive_group(required=True)
+    src.add_argument("--flash", help="merged flash image (bootloader, partition table and app at their offsets)")
+    src.add_argument(
+        "--part",
+        action="append",
+        metavar="OFFSET:PATH",
+        help="a flash part at its offset, repeatable, e.g. 0x0:bootloader.bin 0x8000:partitions.bin "
+        "0x10000:firmware.bin (gaps are 0xFF)",
+    )
+    p_img.add_argument("--flash-size", help="pad the flash image to this size, e.g. 16MB")
+    p_img.add_argument(
+        "--rom",
+        help="use this mask ROM instead of downloading Espressif's pinned copy "
+        "(raw dump for C3/C6; esp32p4_rev0_rom.elf for P4)",
+    )
+    p_img.add_argument("-o", "--out", required=True, help="output ELF path")
+    p_img.set_defaults(func=_esp_image)
+
+    p_rom = sub.add_parser("esp-rom", help="download Espressif's pinned mask ROM for a chip and print its path")
+    p_rom.add_argument("--chip", required=True, help=f"one of {', '.join(esp_image.chips())}")
+    p_rom.add_argument("--force", action="store_true", help="download again even if cached")
+    p_rom.set_defaults(func=_esp_rom)
+
     args = parser.parse_args(argv)
     telemetry.record(f"cli.{args.command}")
     try:
@@ -125,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         # waiting on a simulation, and the spool is due at most hourly.
         telemetry.flush()
         return result
-    except (auth.AuthError, install.InstallError) as exc:
+    except (auth.AuthError, install.InstallError, esp_image.EspImageError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
