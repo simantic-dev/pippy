@@ -81,6 +81,33 @@ or CAN and radio injection, raises `simantic.NotSupported` and names the gap
 instead of quietly doing nothing. You can follow what each engine covers in
 [simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
 
+## ESP32 images
+
+The ESP32-C3, C6 and P4 boot the way silicon does: Espressif's mask ROM runs
+first, then your bootloader, then your app. `sim --elf` therefore takes one ELF
+that carries the ROM and your whole flash image. Build it from the files your
+ESP-IDF or PlatformIO build already produced:
+
+```bash
+simantic esp-image --chip esp32c3 \
+    --part 0x0:bootloader.bin --part 0x8000:partitions.bin --part 0x10000:firmware.bin \
+    --flash-size 16MB -o image.elf
+sim --elf image.elf ...
+```
+
+Already have a merged image from `esptool.py merge_bin`? Pass `--flash merged.bin`
+instead of the parts. The same thing from Python is
+`simantic.esp_image.build_image("esp32c3", flash, out="image.elf")`.
+
+The mask ROM is Espressif's and is not bundled. On first use it is downloaded
+from Espressif's own repositories, pinned by commit and SHA-256, and cached in
+`~/.simantic/esp-rom`: the raw C3 and C6 dumps from
+[espressif/qemu](https://github.com/espressif/qemu/tree/master/pc-bios), and
+the P4 ROM from the [esp-rom-elfs](https://github.com/espressif/esp-rom-elfs)
+release ESP-IDF installs. Offline, or with your own copy, pass `--rom`.
+`simantic esp-rom --chip esp32c3` downloads it ahead of time and prints where it
+went.
+
 ## Testing with pytest
 
 Take the `sim` fixture and write ordinary tests:
