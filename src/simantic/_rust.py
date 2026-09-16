@@ -93,7 +93,7 @@ class RustBackend:
         # The engine hands back runs of bytes, not one entry per byte: the
         # per-object boundary cost is what dominates a chatty UART.
         fresh = [{"t": t, "machine": self.machines[0], "label": label,
-                  "text": bytes(data).decode("latin-1")}
+                  "text": bytes(data).decode("latin-1"), "bytes": bytes(data)}
                  for t, label, data in self._s.take_uart()]
         self._records["uart"].extend(fresh)
         return fresh
