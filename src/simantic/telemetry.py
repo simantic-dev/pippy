@@ -30,6 +30,14 @@ from . import auth
 #: failure — a call-count report there would corrupt a live metric.
 REPORT_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/report-sdk-usage"
 
+#: Demo runs report here instead, unauthenticated. A separate function so an
+#: anonymous, internet-facing endpoint can be rate-limited on its own and can
+#: never reach the billing path that `report-usage` feeds.
+ANON_REPORT_URL = os.environ.get(
+    "SIMANTIC_DEMO_REPORT_URL",
+    "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/report-demo-usage",
+)
+
 #: The server caps a report at 16 KB. Nothing here approaches it, and the
 #: cap is enforced locally so an oversized report is dropped rather than
 #: rejected with an error nobody sees.
@@ -94,6 +102,43 @@ def report(event: str, **fields: object) -> bool:
             return True
     except (urllib.error.URLError, OSError, ValueError):
         # Offline, blocked, slow, or refused — all of which are fine.
+        return False
+
+
+def report_demo(demo: str, *, ok: bool, seconds: float) -> bool:
+    """Report one `simantic demo` run, with no account and no identifier.
+
+    Sent immediately rather than spooled. A demo is usually run through
+    `uvx`, so the process is ephemeral and the reader is unlikely to run a
+    second command: an hourly spool would never be uploaded, and the one run
+    that mattered would be the one we never heard about.
+
+    Strictly less is sent than for an authenticated run — the same
+    environment fields, which demo, whether it worked and how long it took.
+    Nothing here distinguishes two runs by the same person from two people,
+    and that is deliberate: these are strangers who have not signed up to
+    anything.
+    """
+    if not enabled():
+        return False
+
+    payload = {
+        "event": "demo",
+        "demo": demo,
+        "ok": ok,
+        "seconds": round(seconds, 1),
+        **environment(),
+    }
+    request = urllib.request.Request(
+        ANON_REPORT_URL,
+        data=json.dumps(payload).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=3):
+            return True
+    except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
@@ -219,6 +264,9 @@ def describe() -> str:
         f"telemetry: enabled when authenticated\n"
         f"  sends: {fields}, plus test counts and which calls were made\n"
         f"  never sends: file paths, project or test names, firmware, output\n"
+        f"  `simantic demo` also reports anonymously without an account:\n"
+        f"    which demo, whether it worked, how long it took, and {fields}\n"
+        f"    with no identifier, so runs cannot be linked to each other\n"
         f"  buffered at: {spool_path()} ({pending} calls pending, "
         f"uploaded hourly)\n"
         f"  disable with: SIMANTIC_TELEMETRY=0 (or DO_NOT_TRACK=1)"
