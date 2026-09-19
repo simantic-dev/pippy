@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from simantic import demo, telemetry
+from simantic import demo
 
 
 def test_ble_pair_scenario_is_two_nodes_on_one_medium(tmp_path):
@@ -40,53 +40,6 @@ def test_scenario_paths_are_bare_names(tmp_path):
 def test_unknown_demo_lists_the_known_ones():
     with pytest.raises(demo.DemoError, match="available: ble-pair"):
         demo.run("nope")
-
-
-def test_demo_report_needs_no_credentials_and_no_identifier(monkeypatch):
-    """Anonymous by construction: no Authorization, nothing that links runs."""
-    sent = {}
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-    def capture(request, timeout=None):
-        sent["headers"] = {k.lower(): v for k, v in request.header_items()}
-        sent["payload"] = json.loads(request.data)
-        return Response()
-
-    monkeypatch.setattr("simantic.auth.load", lambda: pytest.fail("no credentials"))
-    monkeypatch.setattr("urllib.request.urlopen", capture)
-    assert telemetry.report_demo("ble-pair", ok=True, seconds=4.2)
-
-    assert "authorization" not in sent["headers"]
-    payload = sent["payload"]
-    assert payload["demo"] == "ble-pair" and payload["ok"] is True
-    # No stable identifier of any kind, or these stop being anonymous.
-    for key in ("user", "email", "token", "id", "install_id", "machine_id"):
-        assert key not in payload
-
-
-def test_demo_report_honours_opt_out(monkeypatch):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: pytest.fail("sent"))
-    monkeypatch.setenv("DO_NOT_TRACK", "1")
-    assert not telemetry.report_demo("ble-pair", ok=True, seconds=1.0)
-    monkeypatch.delenv("DO_NOT_TRACK")
-    monkeypatch.setenv("SIMANTIC_TELEMETRY", "0")
-    assert not telemetry.report_demo("ble-pair", ok=True, seconds=1.0)
-
-
-def test_demo_report_never_breaks_the_run(monkeypatch):
-    """A telemetry failure must not change what the demo returns."""
-
-    def boom(*_a, **_k):
-        raise OSError("network down")
-
-    monkeypatch.setattr("urllib.request.urlopen", boom)
-    assert telemetry.report_demo("ble-pair", ok=True, seconds=1.0) is False
 
 
 def test_running_a_demo_never_loads_credentials(tmp_path, monkeypatch):

@@ -18,13 +18,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import install, telemetry
+from . import install
 from ._locate import BinaryNotFound, locate
 from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
@@ -170,13 +169,7 @@ def run(name: str, *, force: bool = False, extra: list[str] | None = None) -> in
     directory = fetch_assets(demo, force=force)
     scenario = write_scenario(demo, directory)
     command = [str(binary), "--scenario", str(scenario), *(extra or [])]
-    started = time.monotonic()
     try:
-        code = subprocess.call(command)
+        return subprocess.call(command)
     except OSError as exc:
         raise DemoError(f"could not run {binary}: {exc}") from None
-    # Reported here rather than spooled: a demo is usually a one-shot `uvx`
-    # process, so an hourly upload would never happen. Best-effort, and it
-    # must not change what the command returns.
-    telemetry.report_demo(demo.name, ok=code == 0, seconds=time.monotonic() - started)
-    return code
