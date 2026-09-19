@@ -12,7 +12,7 @@ import argparse
 import getpass
 import sys
 
-from . import auth, esp_image, install, telemetry
+from . import auth, demo, esp_image, install, telemetry
 from ._locate import BinaryNotFound, locate
 from .mcu import BINARY as SIM_BINARY
 from .mcu import ENV_VAR as SIM_ENV
@@ -116,6 +116,16 @@ def _esp_rom(args) -> int:
     return 0
 
 
+def _demo(args) -> int:
+    if args.name is None:
+        print("Demos run without an account. Pick one:\n")
+        for name, entry in sorted(demo.DEMOS.items()):
+            print(f"  {name:<12} {entry.summary}")
+        print(f"\nRun one with: simantic demo {sorted(demo.DEMOS)[0]}")
+        return 0
+    return demo.run(args.name, force=args.force, extra=args.sim_args)
+
+
 def main(argv: list[str] | None = None) -> int:
     # prog is left to argparse so usage reflects however it was invoked:
     # `simantic`, the short `smtc`, or `python -m simantic`.
@@ -123,6 +133,20 @@ def main(argv: list[str] | None = None) -> int:
         description="Simantic SDK: authentication and binaries."
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    # First, because it is the first thing a new reader should run: it needs
+    # no account and no prior `install`.
+    p_demo = sub.add_parser("demo", help="run a packaged scenario; no account needed")
+    p_demo.add_argument("name", nargs="?", help="demo to run; omit to list them")
+    p_demo.add_argument(
+        "--force", action="store_true", help="re-download the demo's assets"
+    )
+    p_demo.add_argument(
+        "sim_args",
+        nargs=argparse.REMAINDER,
+        help="arguments passed through to the simulator",
+    )
+    p_demo.set_defaults(func=_demo)
 
     p_auth = sub.add_parser("auth", help="store backend credentials in ~/.sim_id")
     p_auth.add_argument(
@@ -188,7 +212,12 @@ def main(argv: list[str] | None = None) -> int:
         # waiting on a simulation, and the spool is due at most hourly.
         telemetry.flush()
         return result
-    except (auth.AuthError, install.InstallError, esp_image.EspImageError) as exc:
+    except (
+        auth.AuthError,
+        install.InstallError,
+        esp_image.EspImageError,
+        demo.DemoError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

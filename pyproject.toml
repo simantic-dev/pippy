@@ -26,8 +26,8 @@ dependencies = ["pyyaml>=6", "pythonnet>=3.0.5"]
 
 [project.urls]
 Homepage = "https://simantic.dev"
-Source = "https://github.com/simantic-dev/simantic-py"
-Issues = "https://github.com/simantic-dev/simantic-py/issues"
+Source = "https://github.com/simantic-dev/pippy"
+Issues = "https://github.com/simantic-dev/pippy/issues"
 
 [project.entry-points.pytest11]
 simantic = "simantic.pytest_plugin"
