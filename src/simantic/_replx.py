@@ -73,8 +73,20 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
             return replx
     try:
         credentials = auth.load()
-    except auth.NotAuthenticated as exc:
-        raise SimError(f"mcu={mcu!r} needs credentials to fetch the model: {exc}") from None
+    except auth.NotAuthenticated:
+        # The first wall a new user hits, so it says what to do rather than
+        # what went wrong. The path to ~/.sim_id is a detail they did not ask
+        # about and cannot act on.
+        raise SimError(
+            f"{mcu} needs an account to download its model.\n"
+            f"\n"
+            f"  simantic auth     sign in (opens a browser)\n"
+            f"  simantic status   check who you are signed in as\n"
+            f"\n"
+            f"Or run a demo first — those need no account:\n"
+            f"\n"
+            f"  simantic demo"
+        ) from None
     request = urllib.request.Request(
         f"{MCU_DETAILS_URL}?model={urllib.parse.quote(mcu)}",
         headers={"Authorization": f"Bearer {credentials.api_key}"},
@@ -83,7 +95,22 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
         with urllib.request.urlopen(request, timeout=30) as response:
             details = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        raise SimError(f"mcu={mcu!r} is not a supported model (HTTP {exc.code})") from None
+        if exc.code in (401, 403):
+            # Distinct from "no such model": the name is fine, this account
+            # cannot have it. Saying "not supported" here sends people off
+            # hunting for a typo that is not there.
+            raise SimError(
+                f"your account does not have access to {mcu}.\n"
+                f"\n"
+                f"  simantic status   check who you are signed in as\n"
+                f"\n"
+                f"If that is the wrong account, `simantic auth` again. "
+                f"Otherwise ask us to enable it."
+            ) from None
+        raise SimError(
+            f"{mcu} is not a model we publish (HTTP {exc.code}). "
+            f"`simantic status` lists what you can run."
+        ) from None
     except urllib.error.URLError as exc:
         raise SimError(f"cannot reach the model backend: {exc.reason}") from None
     replx = details.get("replx")
