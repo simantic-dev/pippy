@@ -25,8 +25,6 @@ on:
       - '.claude/**'
       - 'LICENSE'
   pull_request:
-    # `ready_for_review` is NOT a default activity type. Without it, flipping a
-    # draft to ready fires no event, so the macOS leg gated below never runs.
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - 'docs/**'
@@ -40,20 +38,15 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    # The SDK is pure Python, so a macOS runner proves very little here that
-    # Linux does not — and it bills at $0.062/min against Linux's $0.006, with a
-    # 10x draw on the included-minutes allowance. Two of the six legs were
-    # macOS. It now joins on a push to main, on a v* tag (a release should be
-    # proven on all three), and on a pull request once marked ready for review.
-    # Windows is left unconditional: at 2x it is not what the bill is made of.
+    runs-on: ubuntu-latest
+    # macOS dropped from CI entirely (ci: drop macOS, single-OS fixtures,
+    # manual-only aux checks) — the SDK is pure Python, so a macOS runner
+    # proved very little here that Linux does not, at 10x Linux's billing
+    # rate. macOS is tested locally instead.
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-          && fromJSON('["ubuntu-latest", "macos-latest"]')
-          || fromJSON('["ubuntu-latest"]') }}
         # 3.11 is the floor (tomllib landed there); 3.13 guards the top end.
         python: ["3.11", "3.13"]
     steps:
