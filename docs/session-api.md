@@ -64,7 +64,7 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 | --- | --- |
 | `time` | elapsed virtual seconds |
 | `read_uart()` / `uart_records()` | text since the last read / `[{t, machine, label, text}]` |
-| `frames()` | `[{t, machine, label, protocol, direction, summary, id, data}]` — SPI/I2C/CAN/BLE/Ethernet |
+| `frames()` | `[{t, machine, label, protocol, direction, summary, id, data, miso}]` — SPI/I2C/CAN/BLE/Ethernet; `data` is the payload (MOSI for SPI), `miso` the SPI reply bytes (None otherwise; needs engine ≥ 0.5.17) |
 | `logs()` | `[{t, level, source, message}]` — unhandled registers, model warnings |
 | `interrupts()` | `[{t, machine, direction, exception, name}]` (with `trace_interrupts=True`) |
 | `symbol_trace()` | `[{t, machine, symbol, address, args}]` (with `trace_symbols=[...]`) |

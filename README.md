@@ -123,6 +123,43 @@ The engine starts once per worker rather than once per test, and every machine
 is closed for you. When a test fails, its UART transcript is attached to the
 report, because that is usually the evidence you want.
 
+### Test what went over the wire
+
+Firmware that prints "sensor OK" is reporting its own bookkeeping. The bus
+tells you what happened. Put a scripted device on the other end of each bus
+(a `.repl-frag` overlay with `SPI.ScriptedSpiSlave`, `I2C.ScriptedI2cSlave`,
+`UART.ScriptedUartPeer`, `CAN.ScriptedCanNode`; a few dozen lines of Python
+each), wire the media in a scenario, and assert on `frames()`:
+
+```python
+SCENARIO = {
+    "machines": {"dut": {"mcu": "STM32H753IITX", "overlay": "peers.repl-frag", "elf": "fc.elf"}},
+    "media": [
+        {"type": "uart", "connect": ["dut.usart6", "dut.gpspeer"]},
+        {"type": "can",  "connect": ["dut.fdcan1", "dut.canpeer"]},
+    ],
+}
+
+def test_imu_configured_then_streams(sim):
+    s = sim(scenario=SCENARIO, machine="dut", uart="usart1")
+    s.run_for(3.0)                                            # virtual seconds
+    imu = [f for f in s.frames() if f["label"] == "imu0"]     # one dict per chip-select window
+    cfg = next(f for f in imu if f["data"][0] == 0x4F)        # GYRO_CONFIG0 write
+    assert cfg["data"][1] & 0x0F == 0x06                      # ODR the driver programmed
+    assert cfg["miso"][0] == 0x00                             # what the slave answered
+    bursts = [f for f in imu if f["t"] > cfg["t"] and len(f["data"]) > 16]
+    assert len(bursts) > 100                                  # FIFO reads after configuration
+```
+
+Every record carries its virtual-time stamp, so a rate is a subtraction between
+consecutive frames and an ordering is a comparison. The scenario dict is the
+same shape as `sim --scenario`'s YAML, and because the test owns it, the
+negative control is the same test with a peer removed from `media`. Changing
+what a device does (a NACK for 50 ms, a stale frame, a node that stops
+answering at t = 5 s) is an edit to the peer script, on the virtual clock. The
+`sim` guide covers every output and the peer API:
+https://github.com/simantic-dev/simantic-cli/blob/main/docs/GUIDE.md
+
 `--sim-backend=renode|rust|both` chooses the engine. With `both`, each test runs
 on each and the engine name appears in the test id. Anything an engine cannot do
 is reported as a skip with the reason, so one suite can target both and stay

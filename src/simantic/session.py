@@ -92,9 +92,13 @@ def _uart(r) -> dict:
 
 
 def _frame(r) -> dict:
+    # `miso` (SPI only: the bytes the slave shifted back) arrived in engine
+    # 0.5.17; older engines have no such field, so read it defensively.
+    miso = getattr(r, "Miso", None)
     return {"t": r.T, "machine": r.Machine, "label": r.Label, "protocol": r.Protocol,
             "direction": r.Direction, "summary": r.Summary, "id": r.Id,
-            "data": _bytes(r.Data) if r.Data is not None else None}
+            "data": _bytes(r.Data) if r.Data is not None else None,
+            "miso": _bytes(miso) if miso is not None else None}
 
 
 def _log(r) -> dict:
