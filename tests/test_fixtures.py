@@ -73,6 +73,18 @@ def test_multi_machine_manifest_becomes_a_scenario(tmp_path):
     assert "{TEST_DIR}" not in frag and str(tmp_path.resolve()) in frag
 
 
+def test_parts_scripts_resolve_beside_the_manifest(tmp_path):
+    text = (
+        "mcu: X\nelf: a.elf\n"
+        "parts:\n"
+        "  - {name: baro, type: i2c-device, bus: i2c1, address: 0x63, script: baro.py}\n"
+        "  - {name: card, type: sd-card, bus: sdmmc1, size: 64MiB}\n"
+    )
+    parts = load_manifest(write(tmp_path, text)).scenario(tmp_path)["machines"]["dut"]["parts"]
+    assert parts[0]["script"] == str(tmp_path.resolve() / "baro.py") and parts[0]["address"] == 0x63
+    assert parts[1] == {"name": "card", "type": "sd-card", "bus": "sdmmc1", "size": "64MiB"}
+
+
 def test_wall_budget_defaults_and_override(tmp_path):
     from simantic.fixtures import WALL_WIRED_S, WALL_WIRELESS_S
     assert load_manifest(write(tmp_path, SINGLE)).wall_budget == WALL_WIRED_S
