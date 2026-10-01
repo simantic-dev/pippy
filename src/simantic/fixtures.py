@@ -34,15 +34,47 @@ class ModelLibraryUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class Manifest:
-    """A single-machine test.yaml. Multi-machine fixtures are not covered."""
+    """A test.yaml: one machine (`mcu:` at the top level) or several (`machines:`).
+
+    Either form is run as a scenario. Single-machine manifests are the one-machine
+    case with the machine named `dut`, which is also the machine name the
+    multi-machine form uses by convention in sim-fixtures.
+    """
 
     path: Path
-    mcu: str
-    elf: str
+    machines: dict[str, dict]          # name -> {mcu, elf, overlay?}
+    media: list[dict]
+    nets: list
     timeout: int
     expect: list[str]
     expect_absent: list[str]
-    overlay: str | None = None
+    expect_frames: list[str]
+    expect_frames_absent: list[str]
+    elf_external: bool = False
+    quantum: float | None = None
+    seed: int | None = None
+    serial_execution: bool | None = None
+
+    @property
+    def single(self) -> bool:
+        return len(self.machines) == 1
+
+    # Single-machine conveniences (the first machine).
+    @property
+    def _first(self) -> dict:
+        return next(iter(self.machines.values()))
+
+    @property
+    def mcu(self) -> str:
+        return self._first["mcu"]
+
+    @property
+    def elf(self) -> str:
+        return self._first["elf"]
+
+    @property
+    def overlay(self) -> str | None:
+        return self._first.get("overlay")
 
     @property
     def elf_path(self) -> Path:
@@ -51,6 +83,36 @@ class Manifest:
     @property
     def overlay_path(self) -> Path | None:
         return self.path.parent / self.overlay if self.overlay else None
+
+    def scenario(self, workdir: Path) -> dict:
+        """The scenario dict `Sim(scenario=...)` takes, with absolute paths.
+
+        Overlay fragments are copied into `workdir` with `{TEST_DIR}` expanded
+        to the manifest's directory, the way sim-fixtures' runner does, so a
+        fragment's `file:` references resolve wherever pytest is run from.
+        """
+        here = self.path.parent.resolve()
+        machines = {}
+        for name, m in self.machines.items():
+            spec = {"mcu": m["mcu"], "elf": str(here / m["elf"])}
+            if m.get("overlay"):
+                text = (here / m["overlay"]).read_text().replace("{TEST_DIR}", str(here))
+                frag = workdir / f"{name}-{Path(m['overlay']).name}"
+                frag.write_text(text)
+                spec["overlay"] = str(frag)
+            machines[name] = spec
+        scenario: dict = {"machines": machines}
+        if self.media:
+            scenario["media"] = self.media
+        if self.nets:
+            scenario["nets"] = self.nets
+        if self.quantum is not None:
+            scenario["quantum"] = self.quantum
+        if self.seed is not None:
+            scenario["seed"] = self.seed
+        if self.serial_execution is not None:
+            scenario["serialExecution"] = self.serial_execution
+        return scenario
 
 
 class UnsupportedManifest(ValueError):
@@ -62,23 +124,36 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
     path = Path(path)
     with open(path) as fh:
         data = yaml.safe_load(fh) or {}
-
     if "machines" in data:
-        raise UnsupportedManifest(
-            "multi-machine fixture: needs the sim --scenario runner, which this "
-            "SDK does not drive yet"
-        )
-    if "mcu" not in data:
+        machines = {}
+        for name, m in (data["machines"] or {}).items():
+            if "mcu" not in m or "elf" not in m:
+                raise UnsupportedManifest(f"machine {name!r} needs mcu and elf")
+            machines[name] = {k: m[k] for k in ("mcu", "elf", "overlay") if k in m}
+        if not machines:
+            raise UnsupportedManifest("machines: is empty")
+    elif "mcu" in data:
+        if "elf" not in data:
+            raise UnsupportedManifest("manifest names no elf")
+        machines = {"dut": {k: data[k] for k in ("mcu", "elf", "overlay") if k in data}}
+    else:
         raise UnsupportedManifest("manifest names no mcu")
-
+    if data.get("hardware"):
+        raise UnsupportedManifest("fixture needs physical hardware")
     return Manifest(
         path=path,
-        mcu=data["mcu"],
-        elf=data["elf"],
+        machines=machines,
+        media=list(data.get("media") or []),
+        nets=list(data.get("nets") or []),
         timeout=int(data.get("timeout", 15)),
         expect=list(data.get("expect") or []),
         expect_absent=list(data.get("expect_absent") or []),
-        overlay=data.get("overlay"),
+        expect_frames=list(data.get("expect_frames") or []),
+        expect_frames_absent=list(data.get("expect_frames_absent") or []),
+        elf_external=bool(data.get("elf_external", False)),
+        quantum=data.get("quantum"),
+        seed=data.get("seed"),
+        serial_execution=data.get("serialExecution"),
     )
 
 

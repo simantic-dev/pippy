@@ -172,8 +172,25 @@ every millisecond. On the Rust engine, polling is essentially free.
 
 If you keep `test.yaml` fixture manifests, installing the package also turns
 each one into its own pytest item, so you get `-k` filtering, `--junitxml`, and
-xdist for free. Multi machine manifests need the `--scenario` runner and report
-as skips for now.
+xdist for free. A manifest is the fire-and-forget form of a test: name the
+machine(s), the overlay with the scripted peers, the `media` that wire them to
+the firmware's UARTs and CAN controllers, how long to run, and what must and
+must not appear:
+
+```yaml
+machines:
+  dut: { mcu: STM32H753ZI, overlay: peers.repl-frag, elf: fc.elf }
+media:
+  - { type: uart, connect: [dut.usart6, dut.gpspeer] }
+timeout: 12
+expect:               ["GPS fix: 3"]
+expect_absent:        ["RESULT: FAIL"]
+expect_frames:        ["SPI Rx cs=0 len=2 mosi=4F 06"]   # same line shape as `sim --frames`
+expect_frames_absent: ["CAN Dropped"]
+```
+
+Single-machine manifests (`mcu:` at the top level) are the one-machine case.
+Models resolve through your account; no checkout of ours is needed.
 
 For a single run with no assertions in the middle, there is `run_firmware(...)`:
 
