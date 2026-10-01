@@ -1,6 +1,7 @@
 """test.yaml manifest handling and UART verdicts. No sim binary required."""
 
 import pytest
+from pathlib import Path
 
 from simantic import (
     ModelLibraryUnavailable,
@@ -50,10 +51,44 @@ def test_overlay_path_resolves_beside_the_manifest(tmp_path):
     assert m.overlay_path == tmp_path / "extra.repl-frag"
 
 
-def test_multi_machine_manifest_is_refused_with_a_reason(tmp_path):
-    text = "machines:\n  a: {mcu: X, elf: a.elf}\ntimeout: 5\n"
-    with pytest.raises(UnsupportedManifest, match="scenario"):
-        load_manifest(write(tmp_path, text))
+def test_multi_machine_manifest_becomes_a_scenario(tmp_path):
+    (tmp_path / "peer.repl-frag").write_text('p: UART.ScriptedUartPeer @ sysbus 0xA0000000\n    file: "{TEST_DIR}/peer.py"\n')
+    text = (
+        "machines:\n"
+        "  dut: {mcu: X, elf: a.elf, overlay: peer.repl-frag}\n"
+        "  b: {mcu: Y, elf: b.elf}\n"
+        "media:\n  - {type: uart, connect: [dut.usart1, dut.p]}\n"
+        "timeout: 5\nquantum: 0.0001\n"
+        "expect: ['[dut] RESULT: PASS']\nexpect_frames: ['SPI Rx cs=0']\n"
+    )
+    m = load_manifest(write(tmp_path, text))
+    assert not m.single and m.timeout == 5 and m.expect_frames == ["SPI Rx cs=0"]
+    sc = m.scenario(tmp_path)
+    assert set(sc["machines"]) == {"dut", "b"}
+    assert sc["machines"]["dut"]["elf"] == str((tmp_path / "a.elf").resolve())
+    assert sc["media"] == [{"type": "uart", "connect": ["dut.usart1", "dut.p"]}]
+    assert sc["quantum"] == 0.0001
+    # The overlay is copied with {TEST_DIR} expanded, so peer file: paths resolve anywhere.
+    frag = Path(sc["machines"]["dut"]["overlay"]).read_text()
+    assert "{TEST_DIR}" not in frag and str(tmp_path.resolve()) in frag
+
+
+def test_single_machine_manifest_is_a_one_machine_scenario(tmp_path):
+    m = load_manifest(write(tmp_path, SINGLE))
+    assert m.single
+    assert list(m.scenario(tmp_path)["machines"]) == ["dut"]
+
+
+def test_render_uart_and_frames_match_the_cli_line_shapes():
+    from simantic.pytest_plugin import render_frames, render_uart
+    uart = [{"machine": "dut", "label": "UART2", "text": "RESULT: \x01PASS\r\n"},
+            {"machine": "b", "label": "UART0", "text": "hi\n"}]
+    assert render_uart(uart, multi=False).splitlines()[0] == "RESULT: .PASS"
+    assert "[dut] RESULT: .PASS" in render_uart(uart, multi=True)
+    frames = [{"t": 1.0885, "machine": "dut", "label": "icp", "protocol": "I2c", "direction": "Tx",
+               "summary": "addr=0x63 read len=2 data=FF 00"}]
+    assert render_frames(frames, multi=False) == "[1.088500s] (icp) I2C Tx addr=0x63 read len=2 data=FF 00"
+    assert render_frames(frames, multi=True).startswith("[dut] [1.088500s]")
 
 
 def test_manifest_without_an_mcu_is_refused(tmp_path):

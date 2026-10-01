@@ -10,20 +10,13 @@ and xdist parallelism without any per-project glue.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from ._locate import BinaryNotFound
-from .fixtures import (
-    MCU_LIB_ENV,
-    ModelLibraryUnavailable,
-    UnsupportedManifest,
-    load_manifest,
-    platform_for,
-)
+from .fixtures import ModelLibraryUnavailable, UnsupportedManifest, load_manifest
 from .mcu import ServerNotConfigured, SimError, run as run_firmware
 from . import telemetry
 
@@ -89,48 +82,90 @@ class FixtureYamlFile(pytest.File):
         yield FirmwareItem.from_parent(self, name=self.path.parent.name)
 
 
-class FirmwareItem(_ReportingItem):
-    """One fixture manifest: boot the ELF, check the UART transcript.
+def render_uart(records: list[dict], multi: bool) -> str:
+    """UART records as the `sim --ascii --only-messages` lines a manifest's
+    `expect` strings are written against: per (machine, label) stream, lines on
+    newline, carriage returns dropped, other non-printables as '.', and a
+    `[machine] ` prefix when the scenario has more than one machine."""
+    streams: dict[tuple[str, str], str] = {}
+    for r in records:
+        key = (r["machine"], r["label"])
+        streams[key] = streams.get(key, "") + r["text"]
+    out = []
+    for (machine, _label), text in streams.items():
+        prefix = f"[{machine}] " if multi else ""
+        for line in text.replace("\r", "").split("\n"):
+            clean = "".join(c if 0x20 <= ord(c) <= 0x7E or c == "\t" else "." for c in line)
+            out.append(prefix + clean)
+    return "\n".join(out)
 
-    The platform is resolved by model name, which needs `sim auth`. A local
-    model library ($SIMANTIC_MCU_LIB) overrides that and resolves without a
-    round trip, which is also what a fixture's `overlay` fragment requires,
-    since an overlay edits platform text before the simulator sees it.
+
+def render_frames(frames: list[dict], multi: bool) -> str:
+    """Bus frames in the `sim --frames` line shape, so `expect_frames` strings
+    are the same ones a CLI run would be grepped for:
+    `[machine] [t s] (label) PROTO Dir summary`."""
+    out = []
+    for f in frames:
+        prefix = f"[{f['machine']}] " if multi else ""
+        out.append(f"{prefix}[{f['t']:.6f}s] ({f['label']}) {f['protocol'].upper()} {f['direction']} {f['summary']}")
+    return "\n".join(out)
+
+
+def _check(name: str, text: str, want: list[str], forbid: list[str]) -> list[str]:
+    problems = []
+    for s in want:
+        if s not in text:
+            problems.append(f"expected {name} to contain {s!r}")
+    for s in forbid:
+        if s in text:
+            problems.append(f"{name} must not contain {s!r}")
+    return problems
+
+
+class FirmwareItem(_ReportingItem):
+    """One fixture manifest: boot the machine(s) with their peers, run for the
+    manifest's virtual seconds, then check the UART text and bus frames.
+
+    Every manifest runs as a scenario through `Sim`, so `mcu:` names resolve
+    through your account (or a local model library, $SIMANTIC_MCU_LIB), overlay
+    fragments with scripted peers are applied, and `media:` wires peers to the
+    firmware's UARTs and CAN controllers.
     """
 
     def runtest(self) -> None:
+        from .session import Sim
+
         try:
             manifest = load_manifest(self.path)
         except UnsupportedManifest as exc:
             pytest.skip(str(exc))
-
-        local_models = os.environ.get(MCU_LIB_ENV)
-        if manifest.overlay and not local_models:
-            pytest.skip(
-                f"fixture applies an overlay fragment, which needs a local model: "
-                f"set ${MCU_LIB_ENV} to a local model library"
-            )
+        missing = [m["elf"] for m in manifest.machines.values()
+                   if not (self.path.parent / m["elf"]).exists()]
+        if missing and manifest.elf_external:
+            pytest.skip(f"third-party ELF not present: {', '.join(missing)}")
+        if missing:
+            raise SimulationFailure(f"ELF not found: {', '.join(missing)}")
 
         with tempfile.TemporaryDirectory() as tmp:
+            scenario = manifest.scenario(Path(tmp))
+            first = next(iter(scenario["machines"]))
             try:
-                if local_models:
-                    target = {"repl": platform_for(manifest, Path(tmp))}
-                else:
-                    target = {"mcu": manifest.mcu, "use_cached": True}
-                result = run_firmware(
-                    manifest.elf_path,
-                    timeout=manifest.timeout,
-                    expect=manifest.expect,
-                    expect_absent=manifest.expect_absent,
-                    **target,
-                )
+                with Sim(scenario=scenario, machine=first, cwd=str(self.config.rootpath)) as sim:
+                    sim.run_for(manifest.timeout)
+                    uart = render_uart(sim.uart_records(from_start=True), not manifest.single)
+                    frames = render_frames(sim.frames(from_start=True), not manifest.single)
             except (BinaryNotFound, ModelLibraryUnavailable, ServerNotConfigured) as exc:
                 pytest.skip(str(exc))
             except SimError as exc:
                 raise SimulationFailure(str(exc)) from None
 
-        if not result.passed:
-            raise SimulationFailure(result.failure_report())
+        problems = _check("UART output", uart, manifest.expect, manifest.expect_absent)
+        problems += _check("bus frames", frames, manifest.expect_frames, manifest.expect_frames_absent)
+        if problems:
+            report = "\n".join(problems) + "\n--- UART ---\n" + (uart or "<empty>")
+            if manifest.expect_frames or manifest.expect_frames_absent:
+                report += "\n--- frames ---\n" + (frames or "<none>")
+            raise SimulationFailure(report)
 
     def reportinfo(self):
         return self.path, 0, f"firmware: {self.name}"
