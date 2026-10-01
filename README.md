@@ -192,6 +192,11 @@ expect_frames_absent: ["CAN Dropped"]
 Single-machine manifests (`mcu:` at the top level) are the one-machine case.
 Models resolve through your account; no checkout of ours is needed.
 
+A run also has a wall-clock budget: 30 s of host time by default, 100 s with
+`wireless: true`, or whatever `wall:` says. Going over it fails the test with
+the virtual time reached. Slow simulation is a firmware busy-wait or a model
+gap, and the report tells you which to go find rather than waiting it out.
+
 For a single run with no assertions in the middle, there is `run_firmware(...)`:
 
 ```python

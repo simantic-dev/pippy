@@ -27,6 +27,10 @@ import yaml
 #: through `sim` instead.
 MCU_LIB_ENV = "SIMANTIC_MCU_LIB"
 
+#: Default wall-clock budgets for a manifest run (seconds). Radios cost more.
+WALL_WIRED_S = 30
+WALL_WIRELESS_S = 100
+
 
 class ModelLibraryUnavailable(RuntimeError):
     """No usable model library, so MCU names cannot be resolved locally."""
@@ -51,6 +55,8 @@ class Manifest:
     expect_frames: list[str]
     expect_frames_absent: list[str]
     elf_external: bool = False
+    wall: int | None = None            # wall-clock budget in seconds; None = default
+    wireless: bool = False             # radio fixtures get the longer default budget
     quantum: float | None = None
     seed: int | None = None
     serial_execution: bool | None = None
@@ -58,6 +64,15 @@ class Manifest:
     @property
     def single(self) -> bool:
         return len(self.machines) == 1
+
+    @property
+    def wall_budget(self) -> int:
+        """Seconds of host time the run may take. Slow simulation is a model
+        gap or a firmware busy-wait, not a fact of life, so a run past this
+        budget fails rather than waits. Same defaults as sim-fixtures' runner."""
+        if self.wall is not None:
+            return self.wall
+        return WALL_WIRELESS_S if self.wireless else WALL_WIRED_S
 
     # Single-machine conveniences (the first machine).
     @property
@@ -151,6 +166,8 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
         expect_frames=list(data.get("expect_frames") or []),
         expect_frames_absent=list(data.get("expect_frames_absent") or []),
         elf_external=bool(data.get("elf_external", False)),
+        wall=int(data["wall"]) if data.get("wall") is not None else None,
+        wireless=bool(data.get("wireless", False)),
         quantum=data.get("quantum"),
         seed=data.get("seed"),
         serial_execution=data.get("serialExecution"),

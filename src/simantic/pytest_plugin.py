@@ -111,6 +111,22 @@ def render_frames(frames: list[dict], multi: bool) -> str:
     return "\n".join(out)
 
 
+def _run_within(sim, virtual_s: float, wall_s: float, step: float = 0.5) -> bool:
+    """Advance `virtual_s` of virtual time in `step` chunks, giving up once
+    `wall_s` of host time has passed. Returns False if the budget ran out.
+    A chunk boundary costs a few hundred microseconds, so half-second steps
+    are free at the budgets involved."""
+    import time
+
+    deadline = time.monotonic() + wall_s
+    end = sim.time + virtual_s
+    while sim.time < end - 1e-9:
+        if time.monotonic() >= deadline:
+            return False
+        sim.run_for(min(step, end - sim.time))
+    return True
+
+
 def _check(name: str, text: str, want: list[str], forbid: list[str]) -> list[str]:
     problems = []
     for s in want:
@@ -151,15 +167,22 @@ class FirmwareItem(_ReportingItem):
             first = next(iter(scenario["machines"]))
             try:
                 with Sim(scenario=scenario, machine=first, cwd=str(self.config.rootpath)) as sim:
-                    sim.run_for(manifest.timeout)
+                    over_budget = not _run_within(sim, manifest.timeout, manifest.wall_budget)
                     uart = render_uart(sim.uart_records(from_start=True), not manifest.single)
                     frames = render_frames(sim.frames(from_start=True), not manifest.single)
+                    reached = sim.time
             except (BinaryNotFound, ModelLibraryUnavailable, ServerNotConfigured) as exc:
                 pytest.skip(str(exc))
             except SimError as exc:
                 raise SimulationFailure(str(exc)) from None
 
-        problems = _check("UART output", uart, manifest.expect, manifest.expect_absent)
+        problems = []
+        if over_budget:
+            problems.append(
+                f"wall-clock budget of {manifest.wall_budget}s exceeded at virtual t={reached:.3f}s "
+                f"of {manifest.timeout}s (set `wall:` in test.yaml if this firmware is legitimately slow; "
+                f"otherwise it is a model gap or a busy-wait worth finding)")
+        problems += _check("UART output", uart, manifest.expect, manifest.expect_absent)
         problems += _check("bus frames", frames, manifest.expect_frames, manifest.expect_frames_absent)
         if problems:
             report = "\n".join(problems) + "\n--- UART ---\n" + (uart or "<empty>")
