@@ -102,6 +102,29 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
     )
 
 
+def _resolve_plugin_assemblies_from(d: Path) -> None:
+    """Let the runtime find Renode plugin assemblies (e.g. Microsoft.Dynamic,
+    IronPython) that aren't in sim.deps.json.
+
+    Renode loads some assemblies dynamically (a platform's PythonPeripheral,
+    for one) rather than through Simantic.Core's own dependency graph, so
+    they never make it into the CLI's deps.json. The `sim` executable finds
+    them anyway because a framework-dependent apphost falls back to probing
+    its own directory; pythonnet's manual coreclr host does not get that
+    fallback, so a plain AssemblyLoadContext.Resolving hook does it here.
+    """
+    from System import AppDomain  # type: ignore[import-not-found]
+    from System.IO import File as NetFile, Path as NetPath  # type: ignore[import-not-found]
+    from System.Reflection import Assembly  # type: ignore[import-not-found]
+
+    def handler(_sender, args):
+        name = str(args.Name).split(",")[0]
+        candidate = NetPath.Combine(str(d), name + ".dll")
+        return Assembly.LoadFrom(candidate) if NetFile.Exists(candidate) else None
+
+    AppDomain.CurrentDomain.AssemblyResolve += handler
+
+
 @cache
 def load(explicit: str | os.PathLike[str] | None = None):
     """Host the .NET runtime and import Simantic.Core. Returns the Session namespace."""
@@ -122,6 +145,7 @@ def load(explicit: str | os.PathLike[str] | None = None):
 
     if str(d) not in sys.path:
         sys.path.append(str(d))
+    _resolve_plugin_assemblies_from(d)
     clr.AddReference("Simantic.Core")
     import Simantic.Core.Emulation.Session as session_ns  # type: ignore[import-not-found]
 

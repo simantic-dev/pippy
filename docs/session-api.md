@@ -63,7 +63,7 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 | method | returns |
 | --- | --- |
 | `time` | elapsed virtual seconds |
-| `read_uart()` / `uart_records()` | text since the last read / `[{t, machine, label, text}]` |
+| `read_uart()` / `read_uart_bytes()` / `uart_records()` | text / raw bytes since the last read / `[{t, machine, label, text, bytes}]` |
 | `frames()` | `[{t, machine, label, protocol, direction, summary, id, data}]` — SPI/I2C/CAN/BLE/Ethernet |
 | `logs()` | `[{t, level, source, message}]` — unhandled registers, model warnings |
 | `interrupts()` | `[{t, machine, direction, exception, name}]` (with `trace_interrupts=True`) |

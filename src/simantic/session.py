@@ -88,7 +88,7 @@ def _bytes(net_bytes) -> bytes:
 
 
 def _uart(r) -> dict:
-    return {"t": r.T, "machine": r.Machine, "label": r.Label, "text": r.Text}
+    return {"t": r.T, "machine": r.Machine, "label": r.Label, "text": r.Text, "bytes": _bytes(r.Bytes)}
 
 
 def _frame(r) -> dict:
@@ -282,8 +282,18 @@ class Sim:
         self._pending.clear()
         return "".join(r["text"] for r in recs)
 
+    def read_uart_bytes(self, from_start: bool = False) -> bytes:
+        """Raw bytes the firmware sent since the last read (or ever), byte-accurate.
+
+        Prefer this over `read_uart()` for binary protocols (e.g. UBX, MAVLink):
+        `read_uart()`'s `str` round-trips through an encoding, this does not.
+        """
+        recs = self.uart_records(from_start)
+        self._pending.clear()
+        return b"".join(r["bytes"] for r in recs)
+
     def uart_records(self, from_start: bool = False) -> list[dict]:
-        """Timestamped UART records: {t, machine, label, text}."""
+        """Timestamped UART records: {t, machine, label, text, bytes}."""
         return self._records("uart", from_start)
 
     def frames(self, from_start: bool = False) -> list[dict]:
@@ -423,6 +433,11 @@ class _RenodeBackend:
             if overlay is not None:
                 raise ValueError("overlay= applies to mcu=, not repl=")
             sm = spec.AddMachine(name, str(self._base / repl), elf_path)
+            # A ready .repl is loaded as-is, so relative `using` lines resolve
+            # against its own directory; only a .replx template needs the
+            # engine's render step (which writes to a temp path and would
+            # otherwise break those relative references).
+            sm.RenderPlatform = str(repl).endswith(".replx")
         elif os.environ.get(MCU_LIB_ENV):
             platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
             sm = spec.AddMachine(name, str(platform), elf_path)
