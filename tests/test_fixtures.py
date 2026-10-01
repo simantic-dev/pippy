@@ -73,6 +73,28 @@ def test_multi_machine_manifest_becomes_a_scenario(tmp_path):
     assert "{TEST_DIR}" not in frag and str(tmp_path.resolve()) in frag
 
 
+def test_wall_budget_defaults_and_override(tmp_path):
+    from simantic.fixtures import WALL_WIRED_S, WALL_WIRELESS_S
+    assert load_manifest(write(tmp_path, SINGLE)).wall_budget == WALL_WIRED_S
+    assert load_manifest(write(tmp_path, SINGLE + "wireless: true\n")).wall_budget == WALL_WIRELESS_S
+    assert load_manifest(write(tmp_path, SINGLE + "wall: 7\n")).wall_budget == 7
+
+
+def test_run_within_stops_at_the_wall_budget():
+    from simantic.pytest_plugin import _run_within
+
+    class SlowSim:
+        time = 0.0
+        def run_for(self, s):
+            import time
+            time.sleep(0.05)          # 50 ms of host time per chunk
+            self.time += s
+    fast = SlowSim()
+    assert _run_within(fast, 1.0, wall_s=10, step=0.5) is True and abs(fast.time - 1.0) < 1e-9
+    slow = SlowSim()
+    assert _run_within(slow, 100.0, wall_s=0.12, step=0.5) is False and slow.time < 100.0
+
+
 def test_single_machine_manifest_is_a_one_machine_scenario(tmp_path):
     m = load_manifest(write(tmp_path, SINGLE))
     assert m.single
