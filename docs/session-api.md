@@ -39,7 +39,7 @@ per type — `uart-device` (`script`, `baud`; wire it with a uart medium),
 an index, or a pin like `"PC4"` when several devices share the bus),
 `can-node` (`script`; wire with a can medium), `ble-peer` / `wifi-peer`
 (`ssid`, `passphrase`) / `eth-peer` (`mac`) (`script`; wire with the matching
-medium), `sd-card` (`bus`, `size` such as `"64MiB"`), `peripheral` (`address`,
+medium), `sd-card` (`bus`, `size` such as `"16MiB"`, `image`: a formatted card image, since a blank card has nothing to mount), `peripheral` (`address`,
 `size`, `script`, optional `irq` list), `model` (a stock part: `class` such as
 `Sensors.BMP388`, `bus`, `address`, `properties`).
 `overlay` is a raw platform fragment for anything that list cannot express.

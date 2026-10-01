@@ -78,11 +78,11 @@ def test_parts_scripts_resolve_beside_the_manifest(tmp_path):
         "mcu: X\nelf: a.elf\n"
         "parts:\n"
         "  - {name: baro, type: i2c-device, bus: i2c1, address: 0x63, script: baro.py}\n"
-        "  - {name: card, type: sd-card, bus: sdmmc1, size: 64MiB}\n"
+        "  - {name: card, type: sd-card, bus: sdmmc1, size: 16MiB, image: card.img}\n"
     )
     parts = load_manifest(write(tmp_path, text)).scenario(tmp_path)["machines"]["dut"]["parts"]
     assert parts[0]["script"] == str(tmp_path.resolve() / "baro.py") and parts[0]["address"] == 0x63
-    assert parts[1] == {"name": "card", "type": "sd-card", "bus": "sdmmc1", "size": "64MiB"}
+    assert parts[1]["image"] == str(tmp_path.resolve() / "card.img") and parts[1]["size"] == "16MiB"
 
 
 def test_wall_budget_defaults_and_override(tmp_path):

@@ -31,7 +31,7 @@ from `~/.sim_cache`, else fetched with your stored credentials and cached —
 optionally with `parts=`, a list of peers on the board (one dict each:
 `{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76,
 "script": "baro.py"}`; types: uart-device, i2c-device, spi-device, can-node,
-sd-card, peripheral) and, for what that list cannot express, an `overlay=`
+sd-card (`image:` a formatted card image), peripheral) and, for what that list cannot express, an `overlay=`
 platform fragment. Scenario machines accept the same keys. (`$SIMANTIC_MCU_LIB`
 switches `mcu=` to a local model library for model development.)
 
@@ -54,7 +54,7 @@ from typing import Any
 
 from . import telemetry
 from .engine import load
-from .fixtures import MCU_LIB_ENV, platform_path
+from .fixtures import MCU_LIB_ENV, _resolve_paths, platform_path
 from .mcu import SimError
 
 BACKENDS = ("renode", "rust")
@@ -447,7 +447,7 @@ class _RenodeBackend:
         if parts:
             if not hasattr(ns, "Parts"):
                 raise SimError("parts= needs engine 0.5.17 or newer: run `simantic install engine`")
-            parts = [dict(p, script=str(self._base / p["script"])) if "script" in p else dict(p) for p in parts]
+            parts = [_resolve_paths(p, self._base) for p in parts]
             text = ns.Parts.Fragment(json.dumps(parts))
         if overlay:
             text += (self._base / overlay).read_text()
