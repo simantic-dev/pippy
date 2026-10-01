@@ -37,8 +37,11 @@ against `cwd=` (default: the process cwd).
 per type — `uart-device` (`script`, `baud`; wire it with a uart medium),
 `i2c-device` (`bus`, `address`, `script`), `spi-device` (`bus`, `script`, `cs`:
 an index, or a pin like `"PC4"` when several devices share the bus),
-`can-node` (`script`; wire with a can medium), `sd-card` (`bus`, `size` such as
-`"64MiB"`), `peripheral` (`address`, `size`, `script`, optional `irq` list).
+`can-node` (`script`; wire with a can medium), `ble-peer` / `wifi-peer`
+(`ssid`, `passphrase`) / `eth-peer` (`mac`) (`script`; wire with the matching
+medium), `sd-card` (`bus`, `size` such as `"64MiB"`), `peripheral` (`address`,
+`size`, `script`, optional `irq` list), `model` (a stock part: `class` such as
+`Sensors.BMP388`, `bus`, `address`, `properties`).
 `overlay` is a raw platform fragment for anything that list cannot express.
 Needs engine 0.5.17+.
 
