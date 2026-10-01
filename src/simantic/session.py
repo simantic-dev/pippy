@@ -88,7 +88,12 @@ def _bytes(net_bytes) -> bytes:
 
 
 def _uart(r) -> dict:
-    return {"t": r.T, "machine": r.Machine, "label": r.Label, "text": r.Text, "bytes": _bytes(r.Bytes)}
+    # `Bytes` arrived in engine 0.5.17. Older engines carry only Text, a
+    # Latin-1 decoding of the wire bytes (one char per byte), so encoding it
+    # back is lossless there.
+    raw = getattr(r, "Bytes", None)
+    return {"t": r.T, "machine": r.Machine, "label": r.Label, "text": r.Text,
+            "bytes": _bytes(raw) if raw is not None else r.Text.encode("latin-1")}
 
 
 def _frame(r) -> dict:
