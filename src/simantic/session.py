@@ -28,9 +28,12 @@ one place to use it, a plain script or a process pool is another.
 Platforms: `repl=` is a platform file you supply (.replx templates are
 rendered for you); `mcu=` names a model, resolved exactly like `sim --mcu` —
 from `~/.sim_cache`, else fetched with your stored credentials and cached —
-optionally with an `overlay=` fragment. Scenario machines accept the same
-keys. (`$SIMANTIC_MCU_LIB` switches `mcu=` to a local model library for
-model development.)
+optionally with `parts=`, a list of peers on the board (one dict each:
+`{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76,
+"script": "baro.py"}`; types: uart-device, i2c-device, spi-device, can-node,
+sd-card (`image:` a formatted card image), peripheral) and, for what that list cannot express, an `overlay=`
+platform fragment. Scenario machines accept the same keys. (`$SIMANTIC_MCU_LIB`
+switches `mcu=` to a local model library for model development.)
 
 `backend=` picks the engine, both hosted in-process: `"renode"` (the
 default; `Simantic.Core`, see `engine.py`) or `"rust"` (`simantic_rust`, the
@@ -42,6 +45,7 @@ both tick. This class adds vocabulary, not semantics.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -50,7 +54,7 @@ from typing import Any
 
 from . import telemetry
 from .engine import load
-from .fixtures import MCU_LIB_ENV, platform_path
+from .fixtures import MCU_LIB_ENV, _resolve_paths, platform_path
 from .mcu import SimError
 
 BACKENDS = ("renode", "rust")
@@ -145,6 +149,7 @@ class Sim:
         elf: str | os.PathLike[str] | None = None,
         repl: str | os.PathLike[str] | None = None,
         mcu: str | None = None,
+        parts: list[dict[str, Any]] | None = None,
         overlay: str | os.PathLike[str] | None = None,
         scenario: dict[str, Any] | None = None,
         machine: str | None = None,
@@ -187,8 +192,8 @@ class Sim:
                 if "elf" not in m or ("repl" in m) == ("mcu" in m):
                     raise ValueError(f"machine {m['name']!r} needs elf and exactly one of repl/mcu")
         else:
-            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "overlay": overlay,
-                        "symbolsElfPath": symbols_elf}]
+            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "parts": parts,
+                         "overlay": overlay, "symbolsElfPath": symbols_elf}]
         scenario = scenario or {}
 
         telemetry.record(f"sdk.session.{backend}")
@@ -411,7 +416,8 @@ class _RenodeBackend:
         for region in trace_memory:
             spec.TraceMemory.Add(region)
         for m in machines:
-            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"), m.get("overlay"), m["elf"],
+            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"),
+                              self._fragment(ns, m.get("parts"), m.get("overlay")), m["elf"],
                               m.get("symbolsElfPath"))
         for med in media or []:
             sm = spec.AddMedium(med["type"], list(med.get("connect") or []))
@@ -433,14 +439,28 @@ class _RenodeBackend:
             raise SimError(f"could not start the simulation: {exc}") from exc
         self.machines = list(self._session.Machines)
 
-    def _add_machine(self, spec, name: str, repl, mcu, overlay, elf, symbols_elf) -> None:
+    def _fragment(self, ns, parts, overlay) -> str | None:
+        """The platform fragment for one machine: `parts` (a list of peers, the
+        customer-facing form) rendered by the engine, then any raw `overlay`
+        file. Part script paths resolve against cwd= like every other path."""
+        text = ""
+        if parts:
+            if not hasattr(ns, "Parts"):
+                raise SimError("parts= needs engine 0.5.17 or newer: run `simantic install engine`")
+            parts = [_resolve_paths(p, self._base) for p in parts]
+            text = ns.Parts.Fragment(json.dumps(parts))
+        if overlay:
+            text += (self._base / overlay).read_text()
+        return text or None
+
+    def _add_machine(self, spec, name: str, repl, mcu, fragment, elf, symbols_elf) -> None:
         """Platform file → AddMachine; model name → the local model library when
         $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
         (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
         elf_path = str(self._base / elf)
         if repl is not None:
-            if overlay is not None:
-                raise ValueError("overlay= applies to mcu=, not repl=")
+            if fragment is not None:
+                raise ValueError("overlay= and parts= apply to mcu=, not repl=")
             sm = spec.AddMachine(name, str(self._base / repl), elf_path)
             # A ready .repl is loaded as-is, so relative `using` lines resolve
             # against its own directory; only a .replx template needs the
@@ -448,10 +468,12 @@ class _RenodeBackend:
             # otherwise break those relative references).
             sm.RenderPlatform = str(repl).endswith(".replx")
         elif os.environ.get(MCU_LIB_ENV):
-            platform = platform_path(mcu, self._base / overlay if overlay else None, self._work)
-            sm = spec.AddMachine(name, str(platform), elf_path)
+            frag_path = None
+            if fragment is not None:
+                frag_path = self._work / f"{name}.repl-frag"
+                frag_path.write_text(fragment)
+            sm = spec.AddMachine(name, str(platform_path(mcu, frag_path, self._work)), elf_path)
         else:
-            fragment = (self._base / overlay).read_text() if overlay else None
             sm = spec.AddModel(name, mcu, elf_path, fragment)
         if symbols_elf:
             sm.SymbolsElfPath = str(self._base / symbols_elf)

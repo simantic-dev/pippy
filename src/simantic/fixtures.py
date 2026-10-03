@@ -46,7 +46,7 @@ class Manifest:
     """
 
     path: Path
-    machines: dict[str, dict]          # name -> {mcu, elf, overlay?}
+    machines: dict[str, dict]          # name -> {mcu, elf, parts?, overlay?}
     media: list[dict]
     nets: list
     timeout: int
@@ -115,6 +115,8 @@ class Manifest:
                 frag = workdir / f"{name}-{Path(m['overlay']).name}"
                 frag.write_text(text)
                 spec["overlay"] = str(frag)
+            if m.get("parts"):
+                spec["parts"] = [_resolve_paths(p, here) for p in m["parts"]]
             machines[name] = spec
         scenario: dict = {"machines": machines}
         if self.media:
@@ -134,6 +136,11 @@ class UnsupportedManifest(ValueError):
     """The manifest describes a fixture this SDK cannot run yet."""
 
 
+
+def _resolve_paths(part: dict, base: Path) -> dict:
+    """Peer scripts and card images are given relative to the manifest / scenario."""
+    return dict(part, **{k: str(base / part[k]) for k in ("script", "image") if k in part})
+
 def load_manifest(path: str | os.PathLike[str]) -> Manifest:
     """Parse a test.yaml, or raise UnsupportedManifest with the reason."""
     path = Path(path)
@@ -144,13 +151,13 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
         for name, m in (data["machines"] or {}).items():
             if "mcu" not in m or "elf" not in m:
                 raise UnsupportedManifest(f"machine {name!r} needs mcu and elf")
-            machines[name] = {k: m[k] for k in ("mcu", "elf", "overlay") if k in m}
+            machines[name] = {k: m[k] for k in ("mcu", "elf", "overlay", "parts") if k in m}
         if not machines:
             raise UnsupportedManifest("machines: is empty")
     elif "mcu" in data:
         if "elf" not in data:
             raise UnsupportedManifest("manifest names no elf")
-        machines = {"dut": {k: data[k] for k in ("mcu", "elf", "overlay") if k in data}}
+        machines = {"dut": {k: data[k] for k in ("mcu", "elf", "overlay", "parts") if k in data}}
     else:
         raise UnsupportedManifest("manifest names no mcu")
     if data.get("hardware"):

@@ -127,13 +127,20 @@ report, because that is usually the evidence you want.
 
 Firmware that prints "sensor OK" is reporting its own bookkeeping. The bus
 tells you what happened. Put a scripted device on the other end of each bus
-(a `.repl-frag` overlay with `SPI.ScriptedSpiSlave`, `I2C.ScriptedI2cSlave`,
-`UART.ScriptedUartPeer`, `CAN.ScriptedCanNode`; a few dozen lines of Python
-each), wire the media in a scenario, and assert on `frames()`:
+(a `parts` entry per device, each backed by a few dozen lines of Python), wire
+the media in a scenario, and assert on `frames()`:
 
 ```python
 SCENARIO = {
-    "machines": {"dut": {"mcu": "STM32H753IITX", "overlay": "peers.repl-frag", "elf": "fc.elf"}},
+    "machines": {"dut": {
+        "mcu": "STM32H753IITX", "elf": "fc.elf",
+        "parts": [
+            {"name": "imu0",    "type": "spi-device",  "bus": "spi1", "cs": "PC4", "script": "icm42688.py"},
+            {"name": "baro",    "type": "i2c-device",  "bus": "i2c2", "address": 0x63, "script": "icp20100.py"},
+            {"name": "gpspeer", "type": "uart-device", "baud": 230400, "script": "gps.py"},
+            {"name": "canpeer", "type": "can-node",    "script": "dronecan.py"},
+        ],
+    }},
     "media": [
         {"type": "uart", "connect": ["dut.usart6", "dut.gpspeer"]},
         {"type": "can",  "connect": ["dut.fdcan1", "dut.canpeer"]},
@@ -173,13 +180,17 @@ every millisecond. On the Rust engine, polling is essentially free.
 If you keep `test.yaml` fixture manifests, installing the package also turns
 each one into its own pytest item, so you get `-k` filtering, `--junitxml`, and
 xdist for free. A manifest is the fire-and-forget form of a test: name the
-machine(s), the overlay with the scripted peers, the `media` that wire them to
-the firmware's UARTs and CAN controllers, how long to run, and what must and
-must not appear:
+machine(s) with their `parts`, the `media` that wire UART and CAN peers to
+the firmware's controllers, how long to run, and what must and must not
+appear:
 
 ```yaml
 machines:
-  dut: { mcu: STM32H753ZI, overlay: peers.repl-frag, elf: fc.elf }
+  dut:
+    mcu: STM32H753ZI
+    elf: fc.elf
+    parts:
+      - { name: gpspeer, type: uart-device, baud: 230400, script: gps.py }
 media:
   - { type: uart, connect: [dut.usart6, dut.gpspeer] }
 timeout: 12

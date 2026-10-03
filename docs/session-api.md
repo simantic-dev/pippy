@@ -21,16 +21,29 @@ from simantic import Sim
 Sim(elf="fw.elf", repl="board.repl", uart="usart2")
 
 # a model name: ~/.sim_cache, else fetched with your credentials and cached (like `sim --mcu`)
-Sim(elf="fw.elf", mcu="STM32F401RE", overlay="overlay.repl-frag", uart="usart2")
+Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2",
+    parts=[{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76, "script": "baro.py"}])
 
 # a scenario dict — the sim --scenario schema as Python
 Sim(scenario={...}, machine="c6", uart="uart0", cwd=fixture_dir)
 ```
 
 Scenario dicts use the `sim --scenario` schema verbatim: `machines`
-(`repl`/`mcu` + `overlay` + `elf` + `symbolsElfPath`), `media` (BLE/CAN/Ethernet/UART
+(`repl`/`mcu` + `parts` + `overlay` + `elf` + `symbolsElfPath`), `media` (BLE/CAN/Ethernet/UART
 buses), `networkServices` (scripted peers), `quantum`. Relative paths resolve
 against `cwd=` (default: the process cwd).
+
+`parts` is a list of devices on the board, one dict each: `name`, `type`, then
+per type — `uart-device` (`script`, `baud`; wire it with a uart medium),
+`i2c-device` (`bus`, `address`, `script`), `spi-device` (`bus`, `script`, `cs`:
+an index, or a pin like `"PC4"` when several devices share the bus),
+`can-node` (`script`; wire with a can medium), `ble-peer` / `wifi-peer`
+(`ssid`, `passphrase`) / `eth-peer` (`mac`) (`script`; wire with the matching
+medium), `sd-card` (`bus`, `size` such as `"16MiB"`, `image`: a formatted card image, since a blank card has nothing to mount), `peripheral` (`address`,
+`size`, `script`, optional `irq` list), `model` (a stock part: `class` such as
+`Sensors.BMP388`, `bus`, `address`, `properties`).
+`overlay` is a raw platform fragment for anything that list cannot express.
+Needs engine 0.5.17+.
 
 `symbols_elf=` (single-machine form) / `symbolsElfPath` (scenario machine
 entries — same key as the CLI's scenario YAML, so a scenario dict is
