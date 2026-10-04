@@ -470,7 +470,7 @@ class _RenodeBackend:
         elif os.environ.get(MCU_LIB_ENV):
             frag_path = None
             if fragment is not None:
-                frag_path = self._work / f"{name}.repl-frag"
+                frag_path = self._work / f"{name}.board"
                 frag_path.write_text(fragment)
             sm = spec.AddMachine(name, str(platform_path(mcu, frag_path, self._work)), elf_path)
         else:
