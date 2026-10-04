@@ -47,15 +47,15 @@ def test_timeout_defaults_when_absent(tmp_path):
 
 
 def test_overlay_path_resolves_beside_the_manifest(tmp_path):
-    m = load_manifest(write(tmp_path, SINGLE + "overlay: extra.repl-frag\n"))
-    assert m.overlay_path == tmp_path / "extra.repl-frag"
+    m = load_manifest(write(tmp_path, SINGLE + "overlay: extra.board\n"))
+    assert m.overlay_path == tmp_path / "extra.board"
 
 
 def test_multi_machine_manifest_becomes_a_scenario(tmp_path):
-    (tmp_path / "peer.repl-frag").write_text('p: UART.ScriptedUartPeer @ sysbus 0xA0000000\n    file: "{TEST_DIR}/peer.py"\n')
+    (tmp_path / "peer.board").write_text('p: UART.ScriptedUartPeer @ sysbus 0xA0000000\n    file: "{TEST_DIR}/peer.py"\n')
     text = (
         "machines:\n"
-        "  dut: {mcu: X, elf: a.elf, overlay: peer.repl-frag}\n"
+        "  dut: {mcu: X, elf: a.elf, overlay: peer.board}\n"
         "  b: {mcu: Y, elf: b.elf}\n"
         "media:\n  - {type: uart, connect: [dut.usart1, dut.p]}\n"
         "timeout: 5\nquantum: 0.0001\n"
