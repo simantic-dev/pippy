@@ -1,9 +1,7 @@
 """Driving the `sim` binary — firmware simulation.
 
-Platforms come from one of two places. `mcu=` names a model, which `sim`
-resolves for you and which requires authentication (`sim auth`); models are
-not distributed with this package. `repl=` points at a platform file you
-supply yourself.
+`mcu=` names a model, which `sim` resolves for you and which requires
+authentication (`sim auth`); models are not distributed with this package.
 
 `sim` emits no structured report: the only observable is UART text, written
 to --output. The verdict therefore comes from substring matching, which is
@@ -85,8 +83,7 @@ def sim_binary(explicit: str | os.PathLike[str] | None = None) -> Path:
 def run(
     elf: str | os.PathLike[str],
     *,
-    repl: str | os.PathLike[str] | None = None,
-    mcu: str | None = None,
+    mcu: str,
     server: str | None = None,
     timeout: int = 15,
     expect: Sequence[str] = (),
@@ -99,9 +96,9 @@ def run(
 ) -> SimRun:
     """Run one firmware ELF and check its UART against expectations.
 
-    Give exactly one of `mcu` (a backend-resolved model, needs auth) or
-    `repl` (a local platform file). `server` defaults to $SIM_SERVER_URL,
-    which `sim` itself reads — it is passed explicitly only when given here.
+    `mcu` names a backend-resolved model (needs auth). `server` defaults to
+    $SIM_SERVER_URL, which `sim` itself reads — it is passed explicitly only
+    when given here.
 
     `use_cached` reuses a previously fetched model from ~/.sim_cache, which
     keeps a suite runnable without a round trip per test.
@@ -109,8 +106,6 @@ def run(
     Defaults mirror what a fixture wants to read: ASCII rather than hex, and
     message text without the `[t] (LABEL)` prefix.
     """
-    if (repl is None) == (mcu is None):
-        raise ValueError("give exactly one of repl= or mcu=")
     if backend is not None and backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
     telemetry.record("sdk.run_firmware")
@@ -121,8 +116,8 @@ def run(
             "--elf", str(elf),
             "--timeout", str(timeout),
             "--output", str(out_path),
+            "--mcu", mcu,
         ]
-        cmd += ["--repl", str(repl)] if repl is not None else ["--mcu", mcu]
         if server is not None:
             cmd += ["--server", server]
         if use_cached:

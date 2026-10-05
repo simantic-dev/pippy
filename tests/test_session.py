@@ -1,6 +1,6 @@
 """Sim against the real engine. Skipped unless the engine is installed
 ($SIMANTIC_SIM / `simantic install`) and a fixture is available via
-$SIMANTIC_SESSION_ELF + $SIMANTIC_SESSION_REPL (a single-machine firmware
+$SIMANTIC_SESSION_ELF + $SIMANTIC_SESSION_MCU (a single-machine firmware
 that prints RESULT: PASS on $SIMANTIC_SESSION_UART)."""
 import os
 
@@ -16,22 +16,22 @@ except EngineNotFound:
     HAVE_ENGINE = False
 
 ELF = os.environ.get("SIMANTIC_SESSION_ELF")
-REPL = os.environ.get("SIMANTIC_SESSION_REPL")
+MCU = os.environ.get("SIMANTIC_SESSION_MCU")
 UART = os.environ.get("SIMANTIC_SESSION_UART", "uart0")
 
-needs_engine = pytest.mark.skipif(not (HAVE_ENGINE and ELF and REPL), reason="engine + fixture env not set")
+needs_engine = pytest.mark.skipif(not (HAVE_ENGINE and ELF and MCU), reason="engine + fixture env not set")
 
 
 def test_argument_validation():
     with pytest.raises(ValueError):
-        Sim(elf="fw.elf", repl="a.repl", mcu="X")
+        Sim(elf="fw.elf")
     with pytest.raises(ValueError):
         Sim(scenario={}, elf="fw.elf")
 
 
 @needs_engine
 def test_expect_run_for_and_observers():
-    with Sim(elf=ELF, repl=REPL, uart=UART) as sim:
+    with Sim(elf=ELF, mcu=MCU, uart=UART) as sim:
         assert sim.machines == ["machine"]
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
         assert "PASS" in m and m.virtual_seconds > 0
@@ -50,7 +50,7 @@ def test_expect_run_for_and_observers():
 
 @needs_engine
 def test_expect_timeout_is_assertion():
-    with Sim(elf=ELF, repl=REPL, uart=UART) as sim:
+    with Sim(elf=ELF, mcu=MCU, uart=UART) as sim:
         with pytest.raises(ExpectTimeout) as exc:
             sim.expect("never printed by anything", timeout=2)
         assert isinstance(exc.value, AssertionError)
@@ -65,7 +65,7 @@ def test_symbols_elf_single_machine():
     check), not a claim that a stripped image + a genuinely separate
     companion ELF resolves symbols (verified manually against
     sim-fixtures/build/zephyr/zephyr.elf stripped with arm-none-eabi-strip)."""
-    with Sim(elf=ELF, repl=REPL, uart=UART, symbols_elf=ELF) as sim:
+    with Sim(elf=ELF, mcu=MCU, uart=UART, symbols_elf=ELF) as sim:
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
         assert "PASS" in m
 
@@ -74,7 +74,7 @@ def test_symbols_elf_single_machine():
 def test_symbols_elf_path_in_scenario():
     """symbolsElfPath in a scenario machine dict — same key as the CLI's
     scenario YAML (simantic-cli#184), so a scenario dict stays copy-pasteable."""
-    scenario = {"machines": {"machine": {"repl": REPL, "elf": ELF, "symbolsElfPath": ELF}}}
+    scenario = {"machines": {"machine": {"mcu": MCU, "elf": ELF, "symbolsElfPath": ELF}}}
     with Sim(scenario=scenario, uart=UART) as sim:
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
         assert "PASS" in m

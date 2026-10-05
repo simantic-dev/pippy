@@ -17,9 +17,6 @@ radio/CAN/Ethernet media and scripted network peers — everything `sim
 ```python
 from simantic import Sim
 
-# a platform file you supply
-Sim(elf="fw.elf", repl="board.repl", uart="usart2")
-
 # a model name: ~/.sim_cache, else fetched with your credentials and cached (like `sim --mcu`)
 Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2",
     parts=[{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76, "script": "baro.py"}])

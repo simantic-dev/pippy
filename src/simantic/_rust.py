@@ -37,9 +37,8 @@ class RustBackend:
             raise NotSupported("backend='rust' has no symbols_elf support yet (simantic-core#183)")
         self.machines = [m["name"]]
         self._elf = (base / m["elf"]).read_bytes()
-        repl = base / m["repl"] if m.get("repl") else None
         overlay = base / m["overlay"] if m.get("overlay") else None
-        text = _replx.platform_text(repl=repl, mcu=m.get("mcu"), overlay=overlay)
+        text = _replx.platform_text(mcu=m["mcu"], overlay=overlay)
         engine = load_rust(engine_dir)
         try:
             self._s = engine.Session(text, self._elf)

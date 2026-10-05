@@ -105,17 +105,17 @@ def fake_engine(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "simantic_rust", mod)
     load_rust.cache_clear()
     FakeSession.instances.clear()
-    repl = tmp_path / "board.repl"
-    repl.write_text("cpu: CPU.CortexM\n    freq: {{F:84000000}}\n")
+    mcu = "FAKE-MCU"
+    monkeypatch.setattr(_replx, "model_replx", lambda _mcu: "cpu: CPU.CortexM\n    freq: {{F:84000000}}\n")
     elf = tmp_path / "fw.elf"
     elf.write_bytes(_tiny_elf({"main": (0x08000495, 0x12)}))
-    yield repl, elf
+    yield mcu, elf
     load_rust.cache_clear()
 
 
 def test_expect_records_and_symbols_on_rust(fake_engine):
-    repl, elf = fake_engine
-    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         assert sim.backend == "rust" and sim.machines == ["machine"]
         assert "freq: 84000000" in FakeSession.instances[0].repl_text
         m = sim.expect("boot")
@@ -134,20 +134,20 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
 
 
 def test_unsupported_calls_say_so(fake_engine):
-    repl, elf = fake_engine
-    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         with pytest.raises(NotSupported, match="core#183"):
             sim.threads()
         with pytest.raises(NotSupported):
             sim.inject_can("can1", 0x123, b"\x01")
     with pytest.raises(NotSupported, match="one machine"):
-        Sim(scenario={"machines": {"a": {"elf": str(elf), "repl": str(repl)},
-                                   "b": {"elf": str(elf), "repl": str(repl)}}}, backend="rust")
+        Sim(scenario={"machines": {"a": {"elf": str(elf), "mcu": mcu},
+                                   "b": {"elf": str(elf), "mcu": mcu}}}, backend="rust")
 
 
 def test_backend_name_is_validated():
     with pytest.raises(ValueError, match="backend"):
-        Sim(elf="fw.elf", repl="a.repl", backend="qemu")
+        Sim(elf="fw.elf", mcu="X", backend="qemu")
 
 
 # -- the contracts pyrenode3 lacks (docs/competitors/pyrenode3.md §4.7/§4.8) --
@@ -163,14 +163,14 @@ def test_an_engine_older_than_the_api_is_refused(tmp_path):
 
 
 def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
-    repl, elf = fake_engine
+    mcu, elf = fake_engine
 
     def boom(repl_text, elf_bytes):
         raise RuntimeError("repl parse error at line 5")
 
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", boom)
     with pytest.raises(Exception) as exc:
-        Sim(elf=elf, repl=repl, backend="rust")
+        Sim(elf=elf, mcu=mcu, backend="rust")
     assert "repl parse error at line 5" in str(exc.value)
     assert isinstance(exc.value.__cause__, RuntimeError)
 
@@ -199,9 +199,9 @@ def test_a_burst_crosses_the_boundary_as_runs_not_per_byte(fake_engine, monkeypa
     engine hands back runs; this pins that so a future change cannot quietly
     regress to one object per byte.
     """
-    repl, elf = fake_engine
+    mcu, elf = fake_engine
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", CountingSession)
-    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         sim.run_for(0.002)
         text = sim.read_uart(from_start=True)
     session = CountingSession.instances[-1]
@@ -212,7 +212,7 @@ def test_a_burst_crosses_the_boundary_as_runs_not_per_byte(fake_engine, monkeypa
 def test_records_are_paged_not_returned_whole(fake_engine):
     """Observation is pulled in bounded pages, so a long run cannot hand the
     caller one unbounded list built object by object."""
-    repl, elf = fake_engine
-    with Sim(elf=elf, repl=repl, uart="usart2", backend="rust") as sim:
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         page, cursor, truncated = sim._b.records("uart", 0, 1)
         assert len(page) <= 1 and cursor <= 1 and isinstance(truncated, bool)

@@ -81,11 +81,7 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
             f"{mcu} needs an account to download its model.\n"
             f"\n"
             f"  simantic auth     sign in (opens a browser)\n"
-            f"  simantic status   check who you are signed in as\n"
-            f"\n"
-            f"Or run a demo first — those need no account:\n"
-            f"\n"
-            f"  simantic demo"
+            f"  simantic status   check who you are signed in as"
         ) from None
     request = urllib.request.Request(
         f"{MCU_DETAILS_URL}?model={urllib.parse.quote(mcu)}",
@@ -121,13 +117,9 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
     return replx
 
 
-def platform_text(*, repl: Path | None, mcu: str | None, overlay: Path | None) -> str:
+def platform_text(*, mcu: str, overlay: Path | None) -> str:
     """Rendered `.repl` text for one machine."""
-    if repl is not None:
-        text = repl.read_text()
-    else:
-        assert mcu is not None
-        text = model_replx(mcu)
+    text = model_replx(mcu)
     if overlay is not None:
         # The platform grammar has no comment syntax; strip note lines first.
         body = "\n".join(l for l in overlay.read_text().splitlines() if not l.lstrip().startswith(("#", "//")))

@@ -8,7 +8,7 @@ one place to use it, a plain script or a process pool is another.
 
     from simantic import Sim
 
-    with Sim(elf="fw.elf", repl="board.repl", uart="uart0") as sim:
+    with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
         sim.expect(">>> ")                 # run until the prompt, then hold
         sim.send("print(6*7)")             # delivered when time next advances
         sim.expect(r"42\\r?\\n>>> ")        # run until answered
@@ -25,8 +25,7 @@ one place to use it, a plain script or a process pool is another.
     with Sim(scenario=scenario, machine="c6", uart="uart0") as sim:
         assert sim.expect("CONNACK verified", timeout=60).virtual_seconds < 5
 
-Platforms: `repl=` is a platform file you supply (.replx templates are
-rendered for you); `mcu=` names a model, resolved exactly like `sim --mcu` —
+Platforms: `mcu=` names a model, resolved exactly like `sim --mcu` —
 from `~/.sim_cache`, else fetched with your stored credentials and cached —
 optionally with `parts=`, a list of peers on the board (one dict each:
 `{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76,
@@ -147,7 +146,6 @@ class Sim:
         self,
         *,
         elf: str | os.PathLike[str] | None = None,
-        repl: str | os.PathLike[str] | None = None,
         mcu: str | None = None,
         parts: list[dict[str, Any]] | None = None,
         overlay: str | os.PathLike[str] | None = None,
@@ -179,20 +177,20 @@ class Sim:
         # Argument errors are the caller's and must not depend on an engine
         # being present.
         if scenario is not None:
-            if elf is not None or repl is not None or mcu is not None:
-                raise ValueError("scenario= is exclusive with elf=/repl=/mcu=")
+            if elf is not None or mcu is not None:
+                raise ValueError("scenario= is exclusive with elf=/mcu=")
             if not (scenario.get("machines") or {}):
                 raise ValueError("scenario needs at least one machine")
-        elif elf is None or (repl is None) == (mcu is None):
-            raise ValueError("give elf= and exactly one of repl= or mcu= (or scenario=)")
+        elif elf is None or mcu is None:
+            raise ValueError("give elf= and mcu= (or scenario=)")
 
         if scenario is not None:
             machines = [dict(name=name, **m) for name, m in scenario["machines"].items()]
             for m in machines:
-                if "elf" not in m or ("repl" in m) == ("mcu" in m):
-                    raise ValueError(f"machine {m['name']!r} needs elf and exactly one of repl/mcu")
+                if "elf" not in m or "mcu" not in m:
+                    raise ValueError(f"machine {m['name']!r} needs elf and mcu")
         else:
-            machines = [{"name": "machine", "elf": elf, "repl": repl, "mcu": mcu, "parts": parts,
+            machines = [{"name": "machine", "elf": elf, "mcu": mcu, "parts": parts,
                          "overlay": overlay, "symbolsElfPath": symbols_elf}]
         scenario = scenario or {}
 
@@ -416,7 +414,7 @@ class _RenodeBackend:
         for region in trace_memory:
             spec.TraceMemory.Add(region)
         for m in machines:
-            self._add_machine(spec, m["name"], m.get("repl"), m.get("mcu"),
+            self._add_machine(spec, m["name"], m["mcu"],
                               self._fragment(ns, m.get("parts"), m.get("overlay")), m["elf"],
                               m.get("symbolsElfPath"))
         for med in media or []:
@@ -453,21 +451,12 @@ class _RenodeBackend:
             text += (self._base / overlay).read_text()
         return text or None
 
-    def _add_machine(self, spec, name: str, repl, mcu, fragment, elf, symbols_elf) -> None:
-        """Platform file → AddMachine; model name → the local model library when
+    def _add_machine(self, spec, name: str, mcu, fragment, elf, symbols_elf) -> None:
+        """Model name → the local model library when
         $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
         (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
         elf_path = str(self._base / elf)
-        if repl is not None:
-            if fragment is not None:
-                raise ValueError("overlay= and parts= apply to mcu=, not repl=")
-            sm = spec.AddMachine(name, str(self._base / repl), elf_path)
-            # A ready .repl is loaded as-is, so relative `using` lines resolve
-            # against its own directory; only a .replx template needs the
-            # engine's render step (which writes to a temp path and would
-            # otherwise break those relative references).
-            sm.RenderPlatform = str(repl).endswith(".replx")
-        elif os.environ.get(MCU_LIB_ENV):
+        if os.environ.get(MCU_LIB_ENV):
             frag_path = None
             if fragment is not None:
                 frag_path = self._work / f"{name}.board"

@@ -202,7 +202,7 @@ def firmware():
     """The sim runner, skipping when no binary is installed.
 
         def test_boot(firmware):
-            run = firmware("fw.elf", repl="board.repl", expect=["RESULT: PASS"])
+            run = firmware("fw.elf", mcu="STM32F401RE", expect=["RESULT: PASS"])
             assert run.passed, run.failure_report()
     """
     from .mcu import sim_binary
