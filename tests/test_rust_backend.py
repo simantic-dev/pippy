@@ -175,6 +175,21 @@ def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
     assert isinstance(exc.value.__cause__, RuntimeError)
 
 
+def test_parts_and_unbuilt_overlay_entries_are_not_supported(fake_engine, monkeypatch, tmp_path):
+    mcu, elf = fake_engine
+    with pytest.raises(NotSupported, match="parts="):
+        Sim(elf=elf, mcu=mcu, parts=[{"type": "spi-slave"}], backend="rust")
+
+    monkeypatch.setattr(FakeSession, "skipped", lambda self: ["dma1 (DMA.STM32DMA)", "imu (SPI.NoSuchImu)"], raising=False)
+    overlay = tmp_path / "board.board"
+    overlay.write_text("imu: SPI.NoSuchImu @ spi1\n")
+    with pytest.raises(NotSupported, match="imu"):
+        Sim(elf=elf, mcu=mcu, overlay=overlay, backend="rust")
+    # The model's own gaps are logged, not fatal.
+    with Sim(elf=elf, mcu=mcu, backend="rust") as sim:
+        assert any("dma1" in r["message"] for r in sim.logs())
+
+
 # -- the batching contract (docs/competitors/pyrenode3.md §7 rule 3) ----------
 
 class CountingSession(FakeSession):
