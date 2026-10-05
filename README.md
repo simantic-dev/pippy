@@ -60,8 +60,7 @@ simantic auth
 ```
 
 That opens a browser tab, much like `gh auth login`, and saves a token to
-`~/.sim_id`. In CI, pipe one in instead: `echo $TOKEN | simantic auth`. If you
-bring your own platform file (`repl="board.repl"`), you need no account at all.
+`~/.sim_id`. In CI, pipe one in instead: `echo $TOKEN | simantic auth`.
 
 Already have the `sim` binary? Put it on PATH or point `$SIMANTIC_SIM` at it.
 `simantic status` shows what resolved.

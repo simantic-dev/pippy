@@ -2,8 +2,8 @@
 import sys
 from simantic import Sim
 
-elf, repl = sys.argv[1], sys.argv[2]
-with Sim(elf=elf, repl=repl, uart="usart2") as sim:
+elf, mcu = sys.argv[1], sys.argv[2]
+with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
     m = sim.expect("RESULT: (PASS|FAIL)", timeout=60)
     print(f"{m.text} at virtual t={m.virtual_seconds:.6f}s")
     print("main is at", hex(sim.symbol("main")), "first word", sim.read_memory("main").hex())

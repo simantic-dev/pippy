@@ -8,7 +8,7 @@ one place to use it, a plain script or a process pool is another.
 
     from simantic import Sim
 
-    with Sim(elf="fw.elf", repl="board.repl", uart="uart0") as sim:
+    with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
         sim.expect(">>> ")                 # run until the prompt, then hold
         sim.send("print(6*7)")             # delivered when time next advances
         sim.expect(r"42\\r?\\n>>> ")        # run until answered
@@ -25,8 +25,7 @@ one place to use it, a plain script or a process pool is another.
     with Sim(scenario=scenario, machine="c6", uart="uart0") as sim:
         assert sim.expect("CONNACK verified", timeout=60).virtual_seconds < 5
 
-Platforms: `repl=` is a platform file you supply (.replx templates are
-rendered for you); `mcu=` names a model, resolved exactly like `sim --mcu` —
+Platforms: `mcu=` names a model, resolved exactly like `sim --mcu` —
 from `~/.sim_cache`, else fetched with your stored credentials and cached —
 optionally with `parts=`, a list of peers on the board (one dict each:
 `{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76,

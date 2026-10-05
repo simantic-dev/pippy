@@ -8,12 +8,12 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from simantic import Sim
 
-ELF, REPL = sys.argv[1], sys.argv[2]
+ELF, MCU = sys.argv[1], sys.argv[2]
 N = int(sys.argv[3]) if len(sys.argv) > 3 else 4
 
 
 def one_run(i: int) -> tuple[int, float]:
-    with Sim(elf=ELF, repl=REPL, uart="usart2") as sim:
+    with Sim(elf=ELF, mcu=MCU, uart="usart2") as sim:
         m = sim.expect("RESULT: PASS", timeout=120)
         return i, m.virtual_seconds
 

@@ -1,9 +1,7 @@
 """Driving the `sim` binary — firmware simulation.
 
-Platforms come from one of two places. `mcu=` names a model, which `sim`
-resolves for you and which requires authentication (`sim auth`); models are
-not distributed with this package. `repl=` points at a platform file you
-supply yourself.
+`mcu=` names a model, which `sim` resolves for you and which requires
+authentication (`sim auth`); models are not distributed with this package.
 
 `sim` emits no structured report: the only observable is UART text, written
 to --output. The verdict therefore comes from substring matching, which is
@@ -99,9 +97,9 @@ def run(
 ) -> SimRun:
     """Run one firmware ELF and check its UART against expectations.
 
-    Give exactly one of `mcu` (a backend-resolved model, needs auth) or
-    `repl` (a local platform file). `server` defaults to $SIM_SERVER_URL,
-    which `sim` itself reads — it is passed explicitly only when given here.
+    `mcu` names a backend-resolved model (needs auth). `server` defaults to
+    $SIM_SERVER_URL, which `sim` itself reads — it is passed explicitly only
+    when given here.
 
     `use_cached` reuses a previously fetched model from ~/.sim_cache, which
     keeps a suite runnable without a round trip per test.

@@ -4,9 +4,9 @@ The firmware engine, hosted in your process.
 
     import simantic
 
-    with simantic.Sim(elf="fw.elf", repl="board.repl") as sim:   # live control
+    with simantic.Sim(elf="fw.elf", mcu="STM32F401RE") as sim:   # live control
         sim.expect("ready"); sim.run_for(0.5)
-    run = simantic.run_firmware("fw.elf", repl="board.repl",
+    run = simantic.run_firmware("fw.elf", mcu="STM32F401RE",
                                 expect=["RESULT: PASS"])          # one-shot
 
 The engine is fetched on first use. The `sim` CLI is optional; point
