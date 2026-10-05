@@ -35,6 +35,8 @@ class RustBackend:
         m = machines[0]
         if m.get("symbolsElfPath"):
             raise NotSupported("backend='rust' has no symbols_elf support yet (simantic-core#183)")
+        if m.get("parts"):
+            raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
         self.machines = [m["name"]]
         self._elf = (base / m["elf"]).read_bytes()
         overlay = base / m["overlay"] if m.get("overlay") else None
@@ -44,10 +46,16 @@ class RustBackend:
             self._s = engine.Session(text, self._elf)
         except Exception as exc:
             raise SimError(str(exc)) from exc
+        # An older engine does not report what it left out.
+        skipped = getattr(self._s, "skipped", list)()
+        declared = set(re.findall(r"^(\w+)\s*:", overlay.read_text(), re.M)) if overlay else set()
+        lost = [s for s in skipped if s.split(" ")[0] in declared]
+        if lost:
+            raise NotSupported(f"backend='rust' has no model for {', '.join(lost)}; use backend='renode'")
         self._symbols: dict[str, int] | None = None
         self._records: dict[str, list[dict]] = {k: [] for k in ("uart", "frames", "logs", "interrupts", "symbol_trace")}
         self._records["logs"] = [{"t": 0.0, "level": "Warning", "source": "platform", "message": w}
-                                 for w in self._s.warnings()]
+                                 for w in [*self._s.warnings(), *(f"{e}: not modeled, reads as zero" for e in skipped)]]
 
     # -- stimulus ---------------------------------------------------------
 
