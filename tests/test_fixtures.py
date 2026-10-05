@@ -176,16 +176,9 @@ def test_empty_transcript_is_labelled():
     assert "(no UART output)" in run.failure_report()
 
 
-def test_run_requires_exactly_one_platform_source():
-    with pytest.raises(ValueError, match="exactly one"):
-        run_firmware("a.elf")
-    with pytest.raises(ValueError, match="exactly one"):
-        run_firmware("a.elf", repl="b.repl", mcu="X")
-
-
 def test_run_refuses_an_unknown_backend():
     with pytest.raises(ValueError, match="backend must be"):
-        run_firmware("a.elf", repl="b.repl", backend="qemu")
+        run_firmware("a.elf", mcu="X", backend="qemu")
 
 
 def test_missing_server_is_distinguished_from_a_firmware_failure(tmp_path):
@@ -198,7 +191,7 @@ def test_missing_server_is_distinguished_from_a_firmware_failure(tmp_path):
     )
     fake.chmod(0o755)
     with pytest.raises(ServerNotConfigured, match="SIM_SERVER_URL"):
-        run_firmware("a.elf", repl="b.repl", binary=fake)
+        run_firmware("a.elf", mcu="X", binary=fake)
 
 
 def test_other_failures_stay_plain_sim_errors(tmp_path):
@@ -206,5 +199,5 @@ def test_other_failures_stay_plain_sim_errors(tmp_path):
     fake.write_text("#!/bin/sh\necho 'error: cannot read elf' >&2\nexit 1\n")
     fake.chmod(0o755)
     with pytest.raises(SimError, match="cannot read elf") as exc:
-        run_firmware("a.elf", repl="b.repl", binary=fake)
+        run_firmware("a.elf", mcu="X", binary=fake)
     assert not isinstance(exc.value, ServerNotConfigured)

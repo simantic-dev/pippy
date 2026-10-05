@@ -83,8 +83,7 @@ def sim_binary(explicit: str | os.PathLike[str] | None = None) -> Path:
 def run(
     elf: str | os.PathLike[str],
     *,
-    repl: str | os.PathLike[str] | None = None,
-    mcu: str | None = None,
+    mcu: str,
     server: str | None = None,
     timeout: int = 15,
     expect: Sequence[str] = (),
@@ -107,8 +106,6 @@ def run(
     Defaults mirror what a fixture wants to read: ASCII rather than hex, and
     message text without the `[t] (LABEL)` prefix.
     """
-    if (repl is None) == (mcu is None):
-        raise ValueError("give exactly one of repl= or mcu=")
     if backend is not None and backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
     telemetry.record("sdk.run_firmware")
@@ -119,8 +116,8 @@ def run(
             "--elf", str(elf),
             "--timeout", str(timeout),
             "--output", str(out_path),
+            "--mcu", mcu,
         ]
-        cmd += ["--repl", str(repl)] if repl is not None else ["--mcu", mcu]
         if server is not None:
             cmd += ["--server", server]
         if use_cached:
