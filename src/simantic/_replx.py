@@ -81,11 +81,7 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
             f"{mcu} needs an account to download its model.\n"
             f"\n"
             f"  simantic auth     sign in (opens a browser)\n"
-            f"  simantic status   check who you are signed in as\n"
-            f"\n"
-            f"Or run a demo first — those need no account:\n"
-            f"\n"
-            f"  simantic demo"
+            f"  simantic status   check who you are signed in as"
         ) from None
     request = urllib.request.Request(
         f"{MCU_DETAILS_URL}?model={urllib.parse.quote(mcu)}",
