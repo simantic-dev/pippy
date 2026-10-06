@@ -27,7 +27,7 @@ from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
 from .mcu import run as run_firmware
 from .engine import EngineNotFound, engine_dir, rust_engine_dir
 from .session import BACKENDS, ExpectTimeout, Match, Sim
-from ._rust import NotSupported
+from ._rust import NotSupported, ScenarioRun, run_scenario
 
 __version__ = "0.4.0"
 
@@ -41,6 +41,8 @@ __all__ = [
     "UnsupportedManifest",
     "load_manifest",
     "run_firmware",
+    "run_scenario",
+    "ScenarioRun",
     "sim_binary",
     # scripted sessions
     "Sim",

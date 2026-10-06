@@ -37,7 +37,7 @@ switches `mcu=` to a local model library for model development.)
 `backend=` picks the engine, both hosted in-process: `"renode"` (the
 default; `Simantic.Core`, see `engine.py`) or `"rust"` (`simantic_rust`, the
 pure-Rust engine — one machine, faster, and missing some capabilities that
-raise `NotSupported` rather than silently no-op; simantic-core#183 is the
+raise `NotSupported` rather than silently no-op; docs/session-api.md has the
 table). A script written against one runs unchanged on the other wherever
 both tick. This class adds vocabulary, not semantics.
 """

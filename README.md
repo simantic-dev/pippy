@@ -77,8 +77,8 @@ Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # our Rust 
 The Rust engine is a small extension module, runs one machine, and is
 considerably faster. Anything it cannot do yet, such as multi machine scenarios
 or CAN and radio injection, raises `simantic.NotSupported` and names the gap
-instead of quietly doing nothing. You can follow what each engine covers in
-[simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
+instead of quietly doing nothing. What each engine covers is listed in
+[the engine table](https://github.com/simantic-dev/pippy/blob/main/docs/session-api.md#what-each-engine-supports).
 
 ## ESP32 images
 
@@ -164,12 +164,17 @@ negative control is the same test with a peer removed from `media`. Changing
 what a device does (a NACK for 50 ms, a stale frame, a node that stops
 answering at t = 5 s) is an edit to the peer script, on the virtual clock. The
 `sim` guide covers every output and the peer API:
-https://github.com/simantic-dev/simantic-cli/blob/main/docs/GUIDE.md
+https://simantic.com/docs
 
 `--sim-backend=renode|rust|both` chooses the engine. With `both`, each test runs
 on each and the engine name appears in the test id. Anything an engine cannot do
 is reported as a skip with the reason, so one suite can target both and stay
 honest about what each covers.
+
+`test.yaml` manifests follow the same option. On `rust` a manifest, including a
+multi machine one with `media:`, runs to its timeout in one call and its UART
+output is checked afterwards; `expect_frames` checks are skipped there for now.
+`simantic.run_firmware(..., backend="rust")` does the same for a single ELF.
 
 One tip worth real time: on the Renode engine, every hand off between Python and
 the simulation costs a few hundred microseconds. Reading is free, pausing and
