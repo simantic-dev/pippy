@@ -63,8 +63,9 @@ class FakeSession:
     """Prints 'boot\\n' then 'RESULT: PASS\\n' on usart2, 1 ms apart, from t=2 ms."""
     instances = []
 
-    def __init__(self, repl_text, elf):
+    def __init__(self, repl_text, elf, symbols_elf=None, itm=False):
         self.repl_text, self.elf, self.t = repl_text, elf, 0.0
+        self.symbols_elf, self.itm_on, self.pcs, self.watches = symbols_elf, itm, [], []
         self.sent, self.gpio = [], []
         self._script = [(0.002, b"boot\n"), (0.003, b"RESULT: PASS\n")]
         FakeSession.instances.append(self)
@@ -97,6 +98,36 @@ class FakeSession:
     def read_memory(self, addr, n):
         return bytes(range(n))
 
+    def interrupts(self):
+        return [e for e in [(0.001, 0, 15, True), (0.0015, 0, 15, False), (0.004, 0, 54, True)] if e[0] <= self.t]
+
+    def trace_pc(self, address):
+        self.pcs.append(address)
+
+    def take_pc_trace(self):
+        return [(self.t, 0, pc, [pc, 2, 3, 4]) for pc in self.pcs]
+
+    def trace_memory(self, address, length):
+        self.watches.append((address, length))
+
+    def take_memory_trace(self):
+        return [(self.t, a + 1, 1, 7, True) for a, _ in self.watches] + [(self.t, a, 4, None, False) for a, _ in self.watches]
+
+    def take_itm(self):
+        return [(self.t, 0, b"hi\n")] if self.itm_on else []
+
+    def rtos_name(self):
+        return "Zephyr"
+
+    def task_enumeration_available(self):
+        return False
+
+    def tasks(self):
+        return [(0x20000100, "main", "running", 0, 0, 0x20001000, 1024, 200)]
+
+    def heap(self):
+        return ("sys_heap", 3000, None, 4096, 1)
+
 
 @pytest.fixture
 def fake_engine(monkeypatch, tmp_path):
@@ -108,7 +139,7 @@ def fake_engine(monkeypatch, tmp_path):
     mcu = "FAKE-MCU"
     monkeypatch.setattr(_replx, "model_replx", lambda _mcu: "cpu: CPU.CortexM\n    freq: {{F:84000000}}\n")
     elf = tmp_path / "fw.elf"
-    elf.write_bytes(_tiny_elf({"main": (0x08000495, 0x12)}))
+    elf.write_bytes(_tiny_elf({"main": (0x08000495, 0x12), "counter": (0x20000004, 0x11)}))
     yield mcu, elf
     load_rust.cache_clear()
 
@@ -136,8 +167,6 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
 def test_unsupported_calls_say_so(fake_engine):
     mcu, elf = fake_engine
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
-        with pytest.raises(NotSupported, match="core#183"):
-            sim.threads()
         with pytest.raises(NotSupported):
             sim.inject_can("can1", 0x123, b"\x01")
     with pytest.raises(NotSupported, match="one machine"):
@@ -231,3 +260,54 @@ def test_records_are_paged_not_returned_whole(fake_engine):
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         page, cursor, truncated = sim._b.records("uart", 0, 1)
         assert len(page) <= 1 and cursor <= 1 and isinstance(truncated, bool)
+
+
+def test_threads_heap_and_interrupts_on_rust(fake_engine):
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust", trace_interrupts=True) as sim:
+        sim.run_for(0.002)
+        assert [(r["direction"], r["name"]) for r in sim.interrupts()] == [("Enter", "SysTick"), ("Exit", "SysTick")]
+        sim.run_for(0.003)
+        assert [(r["exception"], r["name"]) for r in sim.interrupts()] == [(54, "IRQ38")]
+        threads = sim.threads()
+        assert threads["rtos"] == "Zephyr" and threads["truncated"]
+        assert threads["threads"][0]["name"] == "main" and threads["threads"][0]["stackHighWaterMarkBytes"] == 200
+        assert sim.heap() == {"allocator": "sys_heap", "arenaSizeBytes": 4096, "usedBytes": 1096,
+                              "freeBytes": 3000, "minimumFreeBytes": None}
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+        sim.run_for(0.01)
+        assert sim.interrupts() == []
+
+
+def test_symbol_trace_memory_trace_and_itm_on_rust(fake_engine, tmp_path):
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust", itm=True,
+             trace_symbols=["main"], trace_memory=["counter", "0x20000010:8"]) as sim:
+        main, counter = sim.symbol("main"), sim.symbol("counter")
+        sim.run_for(0.001)
+        (hit,) = sim.symbol_trace()
+        assert (hit["symbol"], hit["address"]) == ("main", main)
+        assert hit["args"][0] == {"register": "r0", "value": main, "symbol": "main"}
+        assert hit["args"][1] == {"register": "r1", "value": 2, "symbol": None}
+        assert FakeSession.instances[-1].watches == [(counter, 4), (0x20000010, 8)]
+        trace = sim.memory_trace()
+        assert [(r["watch"], r["kind"], r["value"]) for r in trace] == [
+            ("counter", "Write", 7), ("0x20000010:8", "Write", 7), ("counter", "Read", None), ("0x20000010:8", "Read", None)]
+        assert [(r["port"], r["text"]) for r in sim.itm()] == [(0, "hi\n")]
+    with Sim(elf=elf, mcu=mcu, backend="rust", symbols_elf=elf) as sim:
+        assert FakeSession.instances[-1].symbols_elf == elf.read_bytes() and sim.itm() == []
+
+
+def test_an_engine_without_the_debug_calls_says_to_upgrade(fake_engine, monkeypatch):
+    mcu, elf = fake_engine
+
+    class Old(FakeSession):
+        def __init__(self, repl_text, elf):
+            super().__init__(repl_text, elf)
+        trace_pc = property()
+
+    monkeypatch.setattr(sys.modules["simantic_rust"], "Session", Old)
+    with pytest.raises(NotSupported, match="install engine-rust"):
+        Sim(elf=elf, mcu=mcu, backend="rust", itm=True)
+    with pytest.raises(NotSupported, match="install engine-rust"):
+        Sim(elf=elf, mcu=mcu, backend="rust", trace_symbols=["main"])

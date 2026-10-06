@@ -78,6 +78,8 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 | `logs()` | `[{t, level, source, message}]` — unhandled registers, model warnings |
 | `interrupts()` | `[{t, machine, direction, exception, name}]` (with `trace_interrupts=True`) |
 | `symbol_trace()` | `[{t, machine, symbol, address, args}]` (with `trace_symbols=[...]`) |
+| `memory_trace()` | `[{t, machine, watch, kind, address, value}]` (with `trace_memory=[...]`; `value` is `None` for a read). `backend="rust"` only |
+| `itm()` | `[{t, machine, port, bytes, text}]`: ITM stimulus-port output (with `itm=True`, Cortex-M). `backend="rust"` only |
 | `read_memory(addr_or_symbol, count)` / `read_u32(...)` | bytes / int from the system bus (RAM, flash, peripheral registers) |
 | `symbol(name)` | ELF symbol address |
 | `threads()` / `heap()` | RTOS thread snapshot / heap report, when recognised |
