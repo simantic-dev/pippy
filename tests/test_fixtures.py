@@ -201,3 +201,25 @@ def test_other_failures_stay_plain_sim_errors(tmp_path):
     with pytest.raises(SimError, match="cannot read elf") as exc:
         run_firmware("a.elf", mcu="X", binary=fake)
     assert not isinstance(exc.value, ServerNotConfigured)
+
+
+def test_work_dir_sparse_files_and_services_reach_the_scenario(tmp_path):
+    (tmp_path / "overlay.board").write_text('card: SD.SDCard @ sdmmc2\n    imageFile: "{WORK_DIR}/sd.img"\n')
+    (tmp_path / "test.yaml").write_text(
+        "mcu: STM32H753ZI\nelf: fw.elf\noverlay: overlay.board\n"
+        "sparse_files:\n  sd.img: 4M\n"
+        "networkServices:\n  - {name: tower, host: '*', port: 0}\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    scenario = load_manifest(tmp_path / "test.yaml").scenario(work)
+    assert (work / "sd.img").stat().st_size == 4 << 20
+    assert f'"{work}/sd.img"' in Path(scenario["machines"]["dut"]["overlay"]).read_text()
+    assert scenario["networkServices"] == [{"name": "tower", "host": "*", "port": 0}]
+
+
+def test_sim_binary_flags_make_a_manifest_unsupported(tmp_path):
+    (tmp_path / "test.yaml").write_text("mcu: X\nelf: fw.elf\nsim_args: ['--usb-cdc-console', 'usb_otg_fs']\n")
+    with pytest.raises(UnsupportedManifest, match="--usb-cdc-console"):
+        load_manifest(tmp_path / "test.yaml")
+    (tmp_path / "test.yaml").write_text("mcu: X\nelf: fw.elf\nsim_args: ['--ascii']\n")
+    assert load_manifest(tmp_path / "test.yaml").mcu == "X"

@@ -60,6 +60,8 @@ class Manifest:
     quantum: float | None = None
     seed: int | None = None
     serial_execution: bool | None = None
+    network_services: list = ()        # passed through as the scenario's networkServices
+    sparse_files: dict = None          # name -> size ("4G"); blank files made in the work dir
 
     @property
     def single(self) -> bool:
@@ -103,15 +105,21 @@ class Manifest:
         """The scenario dict `Sim(scenario=...)` takes, with absolute paths.
 
         Overlay fragments are copied into `workdir` with `{TEST_DIR}` expanded
-        to the manifest's directory, the way sim-fixtures' runner does, so a
-        fragment's `file:` references resolve wherever pytest is run from.
+        to the manifest's directory and `{WORK_DIR}` to `workdir`, the way
+        sim-fixtures' runner does, so a fragment's `file:` references resolve
+        wherever pytest is run from. `sparse_files:` are created blank in
+        `workdir` (a card image the guest formats cannot be committed at size).
         """
         here = self.path.parent.resolve()
+        for name, size in (self.sparse_files or {}).items():
+            with open(workdir / str(name), "wb") as f:
+                f.truncate(_parse_size(size))
         machines = {}
         for name, m in self.machines.items():
             spec = {"mcu": m["mcu"], "elf": str(here / m["elf"])}
             if m.get("overlay"):
-                text = (here / m["overlay"]).read_text().replace("{TEST_DIR}", str(here))
+                text = ((here / m["overlay"]).read_text().replace("{TEST_DIR}", str(here))
+                        .replace("{WORK_DIR}", str(workdir)))
                 frag = workdir / f"{name}-{Path(m['overlay']).name}"
                 frag.write_text(text)
                 spec["overlay"] = str(frag)
@@ -123,6 +131,8 @@ class Manifest:
             scenario["media"] = self.media
         if self.nets:
             scenario["nets"] = self.nets
+        if self.network_services:
+            scenario["networkServices"] = list(self.network_services)
         if self.quantum is not None:
             scenario["quantum"] = self.quantum
         if self.seed is not None:
@@ -135,6 +145,17 @@ class Manifest:
 class UnsupportedManifest(ValueError):
     """The manifest describes a fixture this SDK cannot run yet."""
 
+
+
+def _parse_size(spec) -> int:
+    """`4G`, `512M`, `64K` or a bare byte count."""
+    text = str(spec).strip().upper()
+    unit = {"K": 10, "M": 20, "G": 30, "T": 40}.get(text[-1:], 0)
+    return int(text[:-1] if unit else text) << unit
+
+
+# `sim_args:` flags that change nothing this package asserts on.
+_HARMLESS_SIM_ARGS = {"--ascii"}
 
 
 def _resolve_paths(part: dict, base: Path) -> dict:
@@ -162,6 +183,12 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
         raise UnsupportedManifest("manifest names no mcu")
     if data.get("hardware"):
         raise UnsupportedManifest("fixture needs physical hardware")
+    # A flag of the `sim` binary has no effect on an in-process run, and a
+    # fixture that depends on one (a USB console, say) would fail for that
+    # reason alone.
+    flags = [a for a in map(str, data.get("sim_args") or []) if a.startswith("--") and a not in _HARMLESS_SIM_ARGS]
+    if flags:
+        raise UnsupportedManifest(f"fixture needs `sim` flags this package does not apply: {' '.join(flags)}")
     return Manifest(
         path=path,
         machines=machines,
@@ -178,6 +205,8 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
         quantum=data.get("quantum"),
         seed=data.get("seed"),
         serial_execution=data.get("serialExecution"),
+        network_services=list(data.get("networkServices") or []),
+        sparse_files=dict(data.get("sparse_files") or {}),
     )
 
 
