@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from . import telemetry
-from .engine import load
+from .engine import _version_of, engine_dir as _engine_dir, load
 from .fixtures import MCU_LIB_ENV, _resolve_paths, platform_path
 from .mcu import SimError
 
@@ -138,6 +138,42 @@ def _symbol_trace(r) -> dict:
     return {"t": r.T, "machine": r.Machine, "symbol": r.Symbol, "address": int(r.Address),
             "args": [{"register": a.Register, "value": int(a.Value), "symbol": a.Symbol} for a in r.Args]}
 
+
+
+def _start_error(exc: Exception) -> str:
+    """What to tell the user when the engine refuses a platform. A model that
+    names a constructor argument the engine does not know was published for a
+    newer engine than the one installed, and that has one fix."""
+    text = str(exc)
+    if "Could not find suitable constructor" in text:
+        return ("could not start the simulation: this model needs a newer engine "
+                "than the one installed.\n\n  simantic install engine --force\n\n"
+                + text.splitlines()[0])
+    return f"could not start the simulation: {text}"
+
+
+def _needs_newer_engine(mcus, engine: Path) -> str | None:
+    """The model's own statement that it needs a newer engine, if it makes one.
+
+    The engine caches each model it resolves with the model's `min_sim_version`.
+    It is read only after a failed start, so a run that works pays nothing; the
+    failure it explains can be any shape (a missing constructor argument, a
+    connection to an input the old engine does not have).
+    """
+    have = _version_of(engine)
+    if have is None:
+        return None
+    for mcu in mcus:
+        try:
+            cached = Path(os.environ.get("HOME", "")) / ".sim_cache" / f"{mcu.lower()}.json"
+            want = json.loads(cached.read_text()).get("min_sim_version")
+            needed = tuple(int(p) for p in want.split("."))
+        except (OSError, ValueError, AttributeError):
+            continue
+        if needed > have:
+            return (f"{mcu} needs engine {want} or newer; "
+                    f"{'.'.join(map(str, have))} is installed.\n\n  simantic install engine --force")
+    return None
 
 class Sim:
     """One live simulation, driven from Python. Use as a context manager."""
@@ -453,7 +489,9 @@ class _RenodeBackend:
             # Chained, not swallowed: the engine's own exception stays
             # reachable as __cause__ so a traceback shows what actually failed
             # rather than only this wrapper's summary.
-            raise SimError(f"could not start the simulation: {exc}") from exc
+            stale = _needs_newer_engine([m["mcu"] for m in machines if m.get("mcu")],
+                                        _engine_dir(engine_dir, fetch=False))
+            raise SimError(stale or _start_error(exc)) from exc
         self.machines = list(self._session.Machines)
 
     def _fragment(self, ns, parts, overlay) -> str | None:
