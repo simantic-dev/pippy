@@ -13,7 +13,11 @@ SHT_SYMTAB = 2
 STT_FUNC = 2
 
 
-def symbols(elf: bytes) -> dict[str, int]:
+SHN_ABS = 0xFFF1
+
+
+def symbols(elf: bytes, absolute: bool = True) -> dict[str, int]:
+    """`absolute=False` leaves out constants (SHN_ABS), which are not addresses."""
     if elf[:4] != b"\x7fELF" or elf[4] != 1 or elf[5] != 1:
         raise ValueError("only 32-bit little-endian ELF images are supported")
     (shoff,) = struct.unpack_from("<I", elf, 0x20)
@@ -28,8 +32,8 @@ def symbols(elf: bytes) -> dict[str, int]:
         strtab_off, strtab_size = sections[link][4], sections[link][5]
         strtab = elf[strtab_off : strtab_off + strtab_size]
         for i in range(size // entsize):
-            name_idx, value, _, info = struct.unpack_from("<IIIB", elf, offset + i * entsize)
-            if name_idx == 0:
+            name_idx, value, _, info, _, shndx = struct.unpack_from("<IIIBBH", elf, offset + i * entsize)
+            if name_idx == 0 or (shndx == SHN_ABS and not absolute):
                 continue
             end = strtab.index(b"\0", name_idx)
             name = strtab[name_idx:end].decode("utf-8", "replace")

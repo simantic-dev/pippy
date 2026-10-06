@@ -156,6 +156,7 @@ class Sim:
         trace_symbols: list[str] = (),
         trace_memory: list[str] = (),
         trace_interrupts: bool = False,
+        itm: bool = False,
         show_logs: bool = False,
         cwd: str | os.PathLike[str] | None = None,
         engine_dir: str | os.PathLike[str] | None = None,
@@ -166,7 +167,8 @@ class Sim:
         self.backend = backend
         self.machine = machine
         self.uart = uart
-        self._cursors = {"uart": 0, "frames": 0, "logs": 0, "interrupts": 0, "symbol_trace": 0}
+        self._cursors = {"uart": 0, "frames": 0, "logs": 0, "interrupts": 0, "symbol_trace": 0,
+                         "memory_trace": 0, "itm": 0}
         # pexpect-style stream: text the firmware printed but no expect() has
         # consumed yet, so sequential expects never miss output that arrived
         # in a previous call's overshoot.
@@ -202,9 +204,11 @@ class Sim:
                 machines, base=self._base, media=scenario.get("media"),
                 services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
                 trace_symbols=trace_symbols, trace_memory=trace_memory, trace_interrupts=trace_interrupts,
-                engine_dir=engine_dir,
+                itm=itm, engine_dir=engine_dir,
             )
         else:
+            if itm:
+                raise SimError("itm= needs backend='rust'")
             self._b = _RenodeBackend(
                 machines, base=self._base, work=self._work, media=scenario.get("media"),
                 services=scenario.get("networkServices"), quantum=scenario.get("quantum"),
@@ -323,6 +327,21 @@ class Sim:
     def symbol_trace(self, from_start: bool = False) -> list[dict]:
         """Hits on trace_symbols= with their argument registers (non-halting)."""
         return self._records("symbol_trace", from_start)
+
+    def memory_trace(self, from_start: bool = False) -> list[dict]:
+        """Accesses to trace_memory= ranges (non-halting): {t, machine, watch, kind,
+        address, value}. `value` is None for a read. backend="rust" only."""
+        return self._rust_records("memory_trace", from_start)
+
+    def itm(self, from_start: bool = False) -> list[dict]:
+        """ITM stimulus-port output (needs itm=True): {t, machine, port, bytes, text}.
+        backend="rust" only."""
+        return self._rust_records("itm", from_start)
+
+    def _rust_records(self, key: str, from_start: bool) -> list[dict]:
+        if self.backend != "rust":
+            raise SimError(f"{key}() needs backend='rust'")
+        return self._records(key, from_start)
 
     def read_memory(self, address: int | str, count: int = 4, machine: str | None = None) -> bytes:
         """Read bytes from the system bus; `address` is an int or a symbol name."""

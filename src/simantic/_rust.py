@@ -27,31 +27,41 @@ def _exception_name(vector: int) -> str | None:
     return f"IRQ{vector - 16}" if vector >= 16 else _CORTEX_M_EXCEPTIONS.get(vector)
 
 
+_NEWER_ENGINE = "on backend='rust' needs a newer Rust engine: run `simantic install engine-rust`"
+
+
 class NotSupported(SimError):
     """The Rust backend has no implementation of this yet (simantic-core#183)."""
 
 
 class RustBackend:
     def __init__(self, machines: list[dict], *, base: Path, media, services, quantum,
-                 trace_symbols, trace_memory, trace_interrupts, engine_dir):
+                 trace_symbols, trace_memory, trace_interrupts, itm, engine_dir):
         if len(machines) != 1:
             raise NotSupported("backend='rust' runs one machine; multi-machine scenarios need backend='renode'")
         if media or services:
             raise NotSupported("backend='rust' has no media or network services yet (simantic-core#183)")
-        if trace_symbols or trace_memory:
-            raise NotSupported("backend='rust' has no symbol/memory tracing yet (simantic-core#183)")
         m = machines[0]
-        if m.get("symbolsElfPath"):
-            raise NotSupported("backend='rust' has no symbols_elf support yet (simantic-core#183)")
         if m.get("parts"):
             raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
         self.machines = [m["name"]]
         self._elf = (base / m["elf"]).read_bytes()
+        # Symbols come from the side ELF when the image that boots is stripped.
+        self._symbols_elf = (base / m["symbolsElfPath"]).read_bytes() if m.get("symbolsElfPath") else self._elf
         overlay = base / m["overlay"] if m.get("overlay") else None
         text = _replx.platform_text(mcu=m["mcu"], overlay=overlay)
         engine = load_rust(engine_dir)
+        # Only what was asked for is passed, so an engine that predates an
+        # option still runs every script that does not use it.
+        options = {}
+        if m.get("symbolsElfPath"):
+            options["symbols_elf"] = self._symbols_elf
+        if itm:
+            options["itm"] = True
         try:
-            self._s = engine.Session(text, self._elf)
+            self._s = engine.Session(text, self._elf, **options)
+        except TypeError as exc:
+            raise NotSupported(f"{'/'.join(options)} {_NEWER_ENGINE}") from exc
         except Exception as exc:
             raise SimError(str(exc)) from exc
         # An older engine does not report what it left out.
@@ -62,8 +72,24 @@ class RustBackend:
             raise NotSupported(f"backend='rust' has no model for {', '.join(lost)}; use backend='renode'")
         self._symbols: dict[str, int] | None = None
         self._trace_interrupts, self._interrupts_seen = trace_interrupts, 0
+        self._itm = itm
         self._cortex_m = "CPU.CortexM" in text
-        self._records: dict[str, list[dict]] = {k: [] for k in ("uart", "frames", "logs", "interrupts", "symbol_trace")}
+        self._names: dict[int, str] | None = None
+        self._records: dict[str, list[dict]] = {k: [] for k in (
+            "uart", "frames", "logs", "interrupts", "symbol_trace", "memory_trace", "itm")}
+        if (trace_symbols or trace_memory) and not hasattr(self._s, "trace_pc"):
+            raise NotSupported(f"symbol and memory tracing {_NEWER_ENGINE}")
+        self._traced = {self._address(name): name for name in trace_symbols}
+        for address in self._traced:
+            self._s.trace_pc(address)
+        self._watches = []
+        for spec in trace_memory:
+            # A symbol or 0xADDR, optionally ":len" in bytes.
+            # ponytail: len defaults to 4, not the symbol's size; read st_size in _elf if that bites.
+            where, _, length = spec.partition(":")
+            address, length = self._address(where), int(length, 0) if length else 4
+            self._s.trace_memory(address, length)
+            self._watches.append((address, address + length, spec))
         self._records["logs"] = [{"t": 0.0, "level": "Warning", "source": "platform", "message": w}
                                  for w in [*self._s.warnings(), *(f"{e}: not modeled, reads as zero" for e in skipped)]]
 
@@ -122,6 +148,22 @@ class RustBackend:
                  "exception": vector, "name": _exception_name(vector) if self._cortex_m else None}
                 for t, _core, vector, entry in log[self._interrupts_seen:])
             self._interrupts_seen = len(log)
+        machine = self.machines[0]
+        if self._traced:
+            registers = ("r0", "r1", "r2", "r3") if self._cortex_m else ("a0", "a1", "a2", "a3")
+            self._records["symbol_trace"].extend(
+                {"t": t, "machine": machine, "symbol": self._traced[pc], "address": pc,
+                 "args": [{"register": r, "value": v, "symbol": self._name(v)} for r, v in zip(registers, args)]}
+                for t, _core, pc, args in self._s.take_pc_trace())
+        if self._watches:
+            self._records["memory_trace"].extend(
+                {"t": t, "machine": machine, "kind": "Write" if write else "Read", "address": address, "value": value,
+                 "watch": next((spec for lo, hi, spec in self._watches if lo < address + width and address < hi), None)}
+                for t, address, width, value, write in self._s.take_memory_trace())
+        if self._itm:
+            self._records["itm"].extend(
+                {"t": t, "machine": machine, "port": port, "bytes": bytes(data), "text": bytes(data).decode("latin-1")}
+                for t, port, data in self._s.take_itm())
         return fresh
 
     # -- observation ------------------------------------------------------
@@ -138,9 +180,18 @@ class RustBackend:
         except Exception as exc:
             raise SimError(str(exc)) from exc
 
+    def _address(self, where: str) -> int:
+        return int(where, 0) if where[:2].lower() == "0x" else self.symbol(where, None)
+
+    def _name(self, address: int) -> str | None:
+        """The symbol at exactly `address`, when an argument is a pointer to one."""
+        if self._names is None:
+            self._names = {v: k for k, v in _elf.symbols(self._symbols_elf, absolute=False).items()}
+        return self._names.get(address)
+
     def symbol(self, name: str, machine: str | None) -> int:
         if self._symbols is None:
-            self._symbols = _elf.symbols(self._elf)
+            self._symbols = _elf.symbols(self._symbols_elf)
         try:
             return self._symbols[name]
         except KeyError:
