@@ -66,7 +66,7 @@ class FakeSession:
     def __init__(self, repl_text, elf, symbols_elf=None, itm=False):
         self.repl_text, self.elf, self.t = repl_text, elf, 0.0
         self.symbols_elf, self.itm_on, self.pcs, self.watches = symbols_elf, itm, [], []
-        self.sent, self.gpio = [], []
+        self.sent, self.gpio, self.can, self.attached, self.adc = [], [], [], [], []
         self._script = [(0.002, b"boot\n"), (0.003, b"RESULT: PASS\n")]
         FakeSession.instances.append(self)
 
@@ -91,6 +91,18 @@ class FakeSession:
 
     def send_uart(self, uart, data):
         self.sent.append((uart, bytes(data)))
+
+    def attach_i2c(self, p, address, device):
+        self.attached.append(("i2c", p, address, device))
+
+    def attach_spi(self, p, device):
+        self.attached.append(("spi", p, device))
+
+    def set_adc(self, p, channel, volts):
+        self.adc.append((p, channel, volts))
+
+    def inject_can(self, p, can_id, data, extended, remote, fd, brs):
+        self.can.append((p, can_id, data, extended, remote, fd, brs))
 
     def inject_gpio(self, p, pin, level):
         self.gpio.append((p, pin, level))
@@ -160,15 +172,22 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
         assert sim.logs()[0]["message"].startswith("spi1")
         sim.send("hi", uart="usart2")
         sim.inject_gpio("gpioc", 13, True)
+        sim.inject_can("can1", 0x123, b"\x01", extended=True)
+        sim.inject_adc("adc1", 3, 1.0)
+        sim.attach_i2c("i2c1", 0x48, "dev")
+        sim.attach_spi("spi1", "dev")
         assert FakeSession.instances[0].sent == [("usart2", b"hi\r")]
         assert FakeSession.instances[0].gpio == [("gpioc", 13, True)]
+        assert FakeSession.instances[0].adc == [("adc1", 3, 1.0)]
+        assert FakeSession.instances[0].attached == [("i2c", "i2c1", 0x48, "dev"), ("spi", "spi1", "dev")]
+        assert FakeSession.instances[0].can == [("can1", 0x123, b"\x01", True, False, False, False)]
 
 
 def test_unsupported_calls_say_so(fake_engine):
     mcu, elf = fake_engine
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         with pytest.raises(NotSupported):
-            sim.inject_can("can1", 0x123, b"\x01")
+            sim.inject_radio("radio", b"\x01")
     with pytest.raises(NotSupported, match="one machine"):
         Sim(scenario={"machines": {"a": {"elf": str(elf), "mcu": mcu},
                                    "b": {"elf": str(elf), "mcu": mcu}}}, backend="rust")

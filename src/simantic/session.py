@@ -275,6 +275,27 @@ class Sim:
         self._b.inject_can(peripheral, can_id, bytes(data), extended, remote, fd, brs,
                            machine or self.machine)
 
+    def inject_adc(self, peripheral: str, channel: int, volts: float) -> None:
+        """Hold an ADC input channel at `volts` (applies from the next sample)."""
+        self._b.inject_adc(peripheral, int(channel), float(volts))
+
+    def attach_i2c(self, peripheral: str, address: int, device: Any) -> None:
+        """Make a Python object the I2C device at 7-bit `address` on `peripheral`.
+
+        `device` needs `write(data: bytes)` and `read(count: int) -> bytes`,
+        and may have `stop()`. An exception it raises comes out of the next
+        `run_for()` / `expect()`.
+        """
+        self._b.attach_i2c(peripheral, int(address), device)
+
+    def attach_spi(self, peripheral: str, device: Any) -> None:
+        """Make a Python callable `device(mosi: int) -> int` the SPI device on `peripheral`.
+
+        Called once per byte exchanged; it returns the byte put on MISO. A
+        controller holds one device, so this replaces any the platform attached.
+        """
+        self._b.attach_spi(peripheral, device)
+
     def inject_radio(self, peripheral: str, frame: bytes, machine: str | None = None) -> None:
         """Deliver a raw radio frame to a radio peripheral."""
         self._b.inject_radio(peripheral, bytes(frame), machine or self.machine)
@@ -540,6 +561,18 @@ class _RenodeBackend:
 
     def inject_radio(self, peripheral, frame, machine):
         self._session.InjectRadio(peripheral, frame, machine)
+
+    def inject_adc(self, peripheral, channel, volts):
+        from ._rust import NotSupported
+        raise NotSupported("backend='renode' has no ADC injection; put channelMillivolts in the board overlay")
+
+    def attach_i2c(self, peripheral, address, device):
+        from ._rust import NotSupported
+        raise NotSupported("backend='renode' takes I2C devices from the platform, not Python objects")
+
+    def attach_spi(self, peripheral, device):
+        from ._rust import NotSupported
+        raise NotSupported("backend='renode' takes SPI devices from the platform, not Python objects")
 
     def run_for(self, seconds: float) -> float:
         return self._await(self._session.RunForAsync(seconds))

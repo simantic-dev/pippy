@@ -223,8 +223,34 @@ class RustBackend:
     def inject_gpio(self, peripheral: str, pin: int, state: bool, machine: str | None) -> None:
         self._s.inject_gpio(peripheral, int(pin), bool(state))
 
-    def inject_can(self, *_a, **_k) -> None:
-        raise NotSupported("backend='rust' has no CAN injection yet")
+    def inject_can(self, peripheral: str, can_id: int, data: bytes, extended: bool, remote: bool,
+                   fd: bool, brs: bool, machine: str | None) -> None:
+        try:
+            self._s.inject_can(peripheral, int(can_id), bytes(data), extended, remote, fd, brs)
+        except AttributeError:
+            raise NotSupported("CAN injection needs a newer Rust engine") from None
+
+    def inject_adc(self, peripheral: str, channel: int, volts: float) -> None:
+        try:
+            self._s.set_adc(peripheral, channel, volts)
+        except AttributeError:
+            raise NotSupported("ADC injection needs a newer Rust engine") from None
+        except ValueError as e:
+            raise SimError(str(e)) from None
+
+    def attach_i2c(self, peripheral: str, address: int, device) -> None:
+        self._attach("attach_i2c", "I2C devices", peripheral, address, device)
+
+    def attach_spi(self, peripheral: str, device) -> None:
+        self._attach("attach_spi", "SPI devices", peripheral, device)
+
+    def _attach(self, method: str, what: str, *args) -> None:
+        try:
+            getattr(self._s, method)(*args)
+        except AttributeError:
+            raise NotSupported(f"{what} from Python need a newer Rust engine") from None
+        except ValueError as e:
+            raise SimError(str(e)) from None
 
     def inject_radio(self, *_a, **_k) -> None:
         raise NotSupported("backend='rust' has no radio injection yet")

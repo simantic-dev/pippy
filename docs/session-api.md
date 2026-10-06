@@ -66,6 +66,9 @@ introspection can resolve — the image that actually runs is still `elf=`.
 | `send(text)` / `send_bytes(b)` | no — delivered when time next advances | |
 | `inject_gpio(peripheral, pin, state)` | no | |
 | `inject_can(peripheral, id, data)` / `inject_radio(peripheral, frame)` | no | |
+| `inject_adc(peripheral, channel, volts)` | no | applies from the next conversion |
+| `attach_i2c(peripheral, address, device)` | no | `device.write(bytes)`, `device.read(n) -> bytes`, optional `device.stop()` |
+| `attach_spi(peripheral, device)` | no | `device(mosi) -> miso`, called per byte; replaces the platform's device |
 
 `expect` keeps a pexpect-style stream: output that arrived in a previous
 call's overshoot is matched first, so a burst of lines can be expected one by
@@ -105,7 +108,10 @@ and `uart=` are the defaults.
 | `threads()` / `heap()` | yes | yes, `Sim` only |
 | `logs()` | yes | no: always empty |
 | `inject_gpio()` | yes | yes |
-| `inject_can()` / `inject_radio()` | yes | no: raises `NotSupported` |
+| `inject_can()` | yes | yes |
+| `inject_adc()` | no: raises `NotSupported` (use the overlay's `channelMillivolts`) | yes: STM32 F0/F4/G4, RP2040, ESP32-C3/P4 |
+| `attach_i2c()` / `attach_spi()` | no: raises `NotSupported` | yes: STM32 I2C (both IP versions) and SPI (all three) |
+| `inject_radio()` | yes | no: raises `NotSupported` |
 | `parts=` and `networkServices` | yes | no: raises `NotSupported` (a manifest is skipped) |
 | Several machines joined by `media` | yes | `run_scenario` and `test.yaml` manifests; `Sim` drives one machine |
 
