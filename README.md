@@ -164,7 +164,7 @@ negative control is the same test with a peer removed from `media`. Changing
 what a device does (a NACK for 50 ms, a stale frame, a node that stops
 answering at t = 5 s) is an edit to the peer script, on the virtual clock. The
 `sim` guide covers every output and the peer API:
-https://github.com/simantic-dev/simantic-cli/blob/main/docs/GUIDE.md
+https://simantic.com/docs
 
 `--sim-backend=renode|rust|both` chooses the engine. With `both`, each test runs
 on each and the engine name appears in the test id. Anything an engine cannot do

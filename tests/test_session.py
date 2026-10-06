@@ -58,7 +58,7 @@ def test_expect_timeout_is_assertion():
 
 @needs_engine
 def test_symbols_elf_single_machine():
-    """symbols_elf= reaches SessionMachine.SymbolsElfPath (simantic-core#307)
+    """symbols_elf= reaches SessionMachine.SymbolsElfPath
     without upsetting the run. No stripped-image fixture is wired up here, so
     the companion ELF is the image itself — a smoke test of the plumbing
     (loading the same ELF's symbols twice isn't a real symbol-resolution
@@ -73,7 +73,7 @@ def test_symbols_elf_single_machine():
 @needs_engine
 def test_symbols_elf_path_in_scenario():
     """symbolsElfPath in a scenario machine dict — same key as the CLI's
-    scenario YAML (simantic-cli#184), so a scenario dict stays copy-pasteable."""
+    scenario YAML, so a scenario dict stays copy-pasteable."""
     scenario = {"machines": {"machine": {"mcu": MCU, "elf": ELF, "symbolsElfPath": ELF}}}
     with Sim(scenario=scenario, uart=UART) as sim:
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)

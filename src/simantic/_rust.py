@@ -2,7 +2,7 @@
 
 Same vocabulary as the Renode backend, one machine at a time. What the Rust
 engine does not do yet raises `NotSupported` rather than silently doing
-nothing — the gap list is simantic-core#183.
+nothing — the gap list is the table in docs/session-api.md.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ _NEWER_ENGINE = "on backend='rust' needs a newer Rust engine: run `simantic inst
 
 
 class NotSupported(SimError):
-    """The Rust backend has no implementation of this yet (simantic-core#183)."""
+    """The Rust backend has no implementation of this yet."""
 
 
 def run_scenario(scenario: dict, timeout: float, *, base: Path, engine_dir=None) -> tuple[list[dict], list[str]]:
@@ -86,7 +86,7 @@ class RustBackend:
         if len(machines) != 1:
             raise NotSupported("backend='rust' runs one machine; multi-machine scenarios need backend='renode'")
         if media or services:
-            raise NotSupported("backend='rust' has no media or network services yet (simantic-core#183)")
+            raise NotSupported("backend='rust' has no media or network services yet")
         m = machines[0]
         if m.get("parts"):
             raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
@@ -148,10 +148,10 @@ class RustBackend:
         self._s.inject_gpio(peripheral, int(pin), bool(state))
 
     def inject_can(self, *_a, **_k) -> None:
-        raise NotSupported("backend='rust' has no CAN injection yet (simantic-core#183)")
+        raise NotSupported("backend='rust' has no CAN injection yet")
 
     def inject_radio(self, *_a, **_k) -> None:
-        raise NotSupported("backend='rust' has no radio injection yet (simantic-core#183)")
+        raise NotSupported("backend='rust' has no radio injection yet")
 
     # -- time -------------------------------------------------------------
 
