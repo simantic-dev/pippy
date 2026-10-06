@@ -200,7 +200,16 @@ expect_frames_absent: ["CAN Dropped"]
 ```
 
 Single-machine manifests (`mcu:` at the top level) are the one-machine case.
-Models resolve through your account; no checkout of ours is needed.
+Models resolve through your account; no checkout of ours is needed. A model can
+require a minimum engine version; if yours is older, the failure names the
+version and the fix (`simantic install engine --force`).
+
+Three more keys cover fixtures that need files or peers on the host side:
+`sparse_files` creates blank files of a given size before the run (a blank SD
+card, say), `networkServices` adds scripted network peers, and `{TEST_DIR}` and
+`{WORK_DIR}` in a board file expand to the manifest's directory and a per-test
+scratch directory. A manifest whose `sim_args` asks for a `sim`
+command-line flag with no equivalent here is skipped, with the flag named.
 
 A run also has a wall-clock budget: 30 s of host time by default, 100 s with
 `wireless: true`, or whatever `wall:` says. Going over it fails the test with
@@ -217,13 +226,21 @@ assert run.passed, run.failure_report()
 
 ## Telemetry
 
-When you are signed in, we count the shape of a pytest session (how many tests
-ran, passed, failed, skipped) and which SDK calls you make, by name only. It is
-one request per pytest run, buffered in `~/.simantic/usage.jsonl`, and uploaded
-at most hourly, so nothing ever waits on the network.
+Only when you are signed in, we report two things:
 
-We do not send file paths, project names, test names, firmware, or simulation
-output. Those are yours. Turn it off whenever you like:
+* **Test counts.** At the end of a pytest run, how many simulator tests passed,
+  failed and were skipped. One request per run.
+* **Which calls you use.** The names of the SDK calls and `simantic` commands
+  you run, such as `sdk.run_firmware` or `cli.install`, and how often. They are
+  counted in `~/.simantic/usage.jsonl` and uploaded at most hourly.
+
+Each report also carries the version of this package, your Python version,
+operating system and CPU architecture. Reports go out when a pytest run or a
+`simantic` command finishes, never while a simulation is running, and a failed
+or slow request is dropped silently.
+
+We do not send file paths, project names, test names, call arguments, firmware,
+or simulation output. Those are yours. Turn it off whenever you like:
 
 ```bash
 export SIMANTIC_TELEMETRY=0     # or DO_NOT_TRACK=1
