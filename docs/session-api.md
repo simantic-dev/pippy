@@ -109,11 +109,14 @@ and `uart=` are the defaults.
 | `logs()` | yes | no: always empty |
 | `inject_gpio()` | yes | yes |
 | `inject_can()` | yes | yes |
-| `inject_adc()` | no: raises `NotSupported` (use the overlay's `channelMillivolts`) | yes: STM32 F0/F4/G4, RP2040, ESP32-C3/P4 |
-| `attach_i2c()` / `attach_spi()` | no: raises `NotSupported` | yes: STM32 I2C (both IP versions) and SPI (all three) |
+| `inject_adc()` | no: raises `NotSupported` (use the overlay's `channelMillivolts`) | yes: STM32 F0/F4/G4, RP2040, ESP32-C3/P4, nRF52840 |
+| `attach_i2c()` / `attach_spi()` | no: raises `NotSupported` | yes: I2C on STM32 (both IP versions), RP2040, NXP S32K3, nRF52840; SPI on STM32, RP2040, nRF52840 |
 | `inject_radio()` | yes | no: raises `NotSupported` |
 | `parts=` and `networkServices` | yes | no: raises `NotSupported` (a manifest is skipped) |
 | Several machines joined by `media` | yes | `run_scenario` and `test.yaml` manifests; `Sim` drives one machine |
+
+The hardware list grows as engine models opt in; a peripheral that does not offer a
+capability raises `SimError` naming it.
 
 "`Sim` only" means a Python test holding a `Sim` can ask for it; a `test.yaml`
 manifest has keys for UART text and bus frames and nothing else, on either
