@@ -139,6 +139,18 @@ def _symbol_trace(r) -> dict:
             "args": [{"register": a.Register, "value": int(a.Value), "symbol": a.Symbol} for a in r.Args]}
 
 
+
+def _start_error(exc: Exception) -> str:
+    """What to tell the user when the engine refuses a platform. A model that
+    names a constructor argument the engine does not know was published for a
+    newer engine than the one installed, and that has one fix."""
+    text = str(exc)
+    if "Could not find suitable constructor" in text:
+        return ("could not start the simulation: this model needs a newer engine "
+                "than the one installed.\n\n  simantic install engine --force\n\n"
+                + text.splitlines()[0])
+    return f"could not start the simulation: {text}"
+
 class Sim:
     """One live simulation, driven from Python. Use as a context manager."""
 
@@ -453,7 +465,7 @@ class _RenodeBackend:
             # Chained, not swallowed: the engine's own exception stays
             # reachable as __cause__ so a traceback shows what actually failed
             # rather than only this wrapper's summary.
-            raise SimError(f"could not start the simulation: {exc}") from exc
+            raise SimError(_start_error(exc)) from exc
         self.machines = list(self._session.Machines)
 
     def _fragment(self, ns, parts, overlay) -> str | None:

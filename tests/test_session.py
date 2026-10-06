@@ -78,3 +78,12 @@ def test_symbols_elf_path_in_scenario():
     with Sim(scenario=scenario, uart=UART) as sim:
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
         assert "PASS" in m
+
+
+def test_start_error_names_the_fix_for_a_stale_engine():
+    from simantic.session import _start_error
+    stale = _start_error(Exception(
+        "Error E25: Could not find suitable constructor for type 'STM32F4_RCC'.\nConstructor selection report: ..."))
+    assert "simantic install engine --force" in stale
+    assert "STM32F4_RCC" in stale and "selection report" not in stale
+    assert _start_error(Exception("no such file")) == "could not start the simulation: no such file"
