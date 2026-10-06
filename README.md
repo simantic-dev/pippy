@@ -42,9 +42,9 @@ Three things you get that a bench cannot give you:
 The simulator lives inside your Python process, so there is no server to start
 and no port to talk to.
 
-> **Alpha, version 0.6.x.** We are still moving things around, so the API can
+> **Alpha, version 0.4.x.** We are still moving things around, so the API can
 > change without a deprecation period. Pin an exact version
-> (`simantic==0.6.0`) if you depend on it, and please hold off on production
+> (`simantic==0.4.0`) if you depend on it, and please hold off on production
 > pipelines for now. Tell us what breaks.
 
 ## Setup
