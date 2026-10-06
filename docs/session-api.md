@@ -91,6 +91,33 @@ one. `timeout` is wall-clock effort, not virtual time — assert on
 Every observer takes `machine=` in a scenario; the constructor's `machine=`
 and `uart=` are the defaults.
 
+## What each engine supports
+
+| | `backend="renode"` | `backend="rust"` |
+| --- | --- | --- |
+| UART text: `expect()`, manifest `expect` / `expect_absent` | yes | yes |
+| Bus frames (SPI, I2C, CAN, BLE, Ethernet): `frames()`, manifest `expect_frames` | yes | no: `frames()` is empty, a manifest with `expect_frames` is skipped |
+| `interrupts()` | yes | yes, `Sim` only |
+| `symbol_trace()` | yes | yes, `Sim` only |
+| `memory_trace()` | no | yes, `Sim` only |
+| `itm()` | no | yes, `Sim` only |
+| `read_memory()` / `read_u32()` / `symbol()` | yes | yes, `Sim` only |
+| `threads()` / `heap()` | yes | yes, `Sim` only |
+| `logs()` | yes | no: always empty |
+| `inject_gpio()` | yes | yes |
+| `inject_can()` / `inject_radio()` | yes | no: raises `NotSupported` |
+| `parts=` and `networkServices` | yes | no: raises `NotSupported` (a manifest is skipped) |
+| Several machines joined by `media` | yes | `test.yaml` manifests only; `Sim` drives one machine |
+
+"`Sim` only" means a Python test holding a `Sim` can ask for it; a `test.yaml`
+manifest has keys for UART text and bus frames and nothing else, on either
+engine.
+
+On the Rust engine a manifest runs in one call, to its timeout, and its UART
+output is checked afterwards. That call can run several machines, but it cannot
+be paused, so nothing can be read or injected part-way. `Sim` needs exactly
+that, and its Rust session holds a single machine.
+
 ## Timing assertions and the quantum
 
 Renode delivers scheduled events on sync points, so a timing assertion is only

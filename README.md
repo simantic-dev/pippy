@@ -77,8 +77,8 @@ Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # our Rust 
 The Rust engine is a small extension module, runs one machine, and is
 considerably faster. Anything it cannot do yet, such as multi machine scenarios
 or CAN and radio injection, raises `simantic.NotSupported` and names the gap
-instead of quietly doing nothing. You can follow what each engine covers in
-[simantic-core#183](https://github.com/simantic-dev/simantic-core/issues/183).
+instead of quietly doing nothing. What each engine covers is listed in
+[the engine table](https://github.com/simantic-dev/pippy/blob/main/docs/session-api.md#what-each-engine-supports).
 
 ## ESP32 images
 
