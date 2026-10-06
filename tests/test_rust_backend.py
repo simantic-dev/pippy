@@ -369,3 +369,10 @@ def test_run_firmware_on_rust_needs_no_sim_binary(fake_engine, monkeypatch, tmp_
     monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario([]), raising=False)
     run = run_firmware(elf, mcu=mcu, backend="rust", expect=["RESULT: PASS"], expect_absent=["FAIL"])
     assert run.passed and run.runner == "rust engine" and "RESULT: PASS" in run.output
+
+
+def test_run_firmware_refuses_tlib():
+    from simantic import run_firmware
+
+    with pytest.raises(ValueError, match="renode"):
+        run_firmware("fw.elf", mcu="STM32F401RE", backend="tlib")

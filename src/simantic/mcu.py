@@ -28,10 +28,11 @@ from . import telemetry
 ENV_VAR = "SIMANTIC_SIM"
 BINARY = "sim"
 
-#: The engines `run(backend=)` can use: "tlib" is the default, driven through
-#: the `sim` binary; "rust" is the Rust engine, run in this process. They do
-#: not support the same targets and peripherals.
-BACKENDS = ("tlib", "rust")
+#: The engines `run(backend=)` can use, the same names `Sim(backend=)` takes:
+#: "renode" is the default, driven through the `sim` binary; "rust" is the
+#: Rust engine, run in this process. They do not support the same targets and
+#: peripherals.
+BACKENDS = ("renode", "rust")
 
 
 class SimError(RuntimeError):
