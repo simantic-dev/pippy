@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from simantic import NotSupported, Sim, _elf, _replx
+from simantic import NotSupported, Sim, SimError, _elf, _replx
 from simantic.engine import load_rust
 
 
@@ -316,10 +316,17 @@ def test_an_engine_without_the_debug_calls_says_to_upgrade(fake_engine, monkeypa
 # -- one-shot scenarios --------------------------------------------------------
 
 def _fake_run_scenario(calls, skipped=()):
-    def run_scenario(machines, media, nets, services, timeout_seconds, quantum):
+    def run_scenario(machines, media, nets, services, timeout_seconds, quantum, **trace):
         calls.append((machines, media, nets, timeout_seconds, quantum))
-        return ([("nodea", "usart2"), ("nodeb", "usart2")],
-                [(0.1, 0, b"RESULT: PASS\n"), (0.2, 1, b"RESULT: PASS\n")], ["w"], list(skipped))
+        result = ([("nodea", "usart2"), ("nodeb", "usart2")],
+                  [(0.1, 0, b"RESULT: PASS\n"), (0.2, 1, b"RESULT: PASS\n")], ["w"], list(skipped))
+        if not trace:
+            return result  # an engine that predates tracing returns four
+        calls.append(trace)
+        (machine, main), (_, watched, _len) = trace["trace_pc"][0], trace["trace_memory"][0]
+        return (*result, ([(0.5, machine, 0, main, [1, 2, 3, 4])],
+                          [(0.6, machine, watched, 4, 7, True)],
+                          [(0.7, "nodeb", 0, 15, True)]))
     return run_scenario
 
 
@@ -333,7 +340,8 @@ def test_a_scenario_runs_in_one_call_on_rust(fake_engine, monkeypatch, tmp_path)
     scenario = {"machines": {"nodea": {"mcu": mcu, "elf": str(elf)}, "nodeb": {"mcu": mcu, "elf": str(elf)}},
                 "media": [{"type": "can", "connect": ["nodea.can1", "nodeb.can1"]}],
                 "nets": [["nodea.gpioa.3", "nodeb.gpiob.4"]], "quantum": 0.0001}
-    records, logs = run_scenario(scenario, 2.5, base=tmp_path)
+    run = run_scenario(scenario, 2.5, base=tmp_path)
+    records, logs = run.uart_records, run.warnings
     machines, media, nets, timeout, quantum = calls[0]
     assert [(n, e) for n, _text, e in machines] == [("nodea", elf.read_bytes()), ("nodeb", elf.read_bytes())]
     assert "freq: 84000000" in machines[0][1]
@@ -376,3 +384,26 @@ def test_run_firmware_refuses_tlib():
 
     with pytest.raises(ValueError, match="renode"):
         run_firmware("fw.elf", mcu="STM32F401RE", backend="tlib")
+
+
+def test_a_one_shot_scenario_returns_its_traces(fake_engine, monkeypatch, tmp_path):
+    from simantic import _elf, run_scenario
+
+    mcu, elf = fake_engine
+    symbol, address = next(iter(_elf.symbols(elf.read_bytes()).items()))
+    calls = []
+    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario(calls), raising=False)
+    scenario = {"machines": {"nodea": {"mcu": mcu, "elf": str(elf)}, "nodeb": {"mcu": mcu, "elf": str(elf)}}}
+    run = run_scenario(scenario, 1, base=tmp_path, trace_symbols=[symbol], trace_memory=["0x20000000:8"],
+                       trace_interrupts=True)
+    assert calls[1] == {"trace_pc": [("nodea", address), ("nodeb", address)],
+                        "trace_memory": [("nodea", 0x20000000, 8), ("nodeb", 0x20000000, 8)],
+                        "trace_interrupts": True}
+    hit, = run.symbol_trace
+    assert (hit["machine"], hit["symbol"], hit["args"][0]["register"], hit["args"][0]["value"]) == ("nodea", symbol, "r0", 1)
+    assert run.memory_trace == [{"t": 0.6, "machine": "nodea", "kind": "Write", "address": 0x20000000, "value": 7,
+                                 "watch": "0x20000000:8"}]
+    assert run.interrupts == [{"t": 0.7, "machine": "nodeb", "direction": "Enter", "exception": 15, "name": "SysTick"}]
+    assert run.output.startswith("[nodea] RESULT: PASS")
+    with pytest.raises(SimError, match="no symbol"):
+        run_scenario(scenario, 1, base=tmp_path, trace_symbols=["no_such_function"])

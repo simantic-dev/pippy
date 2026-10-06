@@ -132,7 +132,7 @@ def run(
     if backend == "rust":
         from ._rust import run_scenario
 
-        records, _ = run_scenario({"machines": {"machine": {"mcu": mcu, "elf": str(elf)}}}, timeout, base=Path.cwd())
+        records = run_scenario({"machines": {"machine": {"mcu": mcu, "elf": str(elf)}}}, timeout).uart_records
         output = render_uart(records, multi=False)
         return SimRun(output=output, exit_code=0, runner="rust engine",
                       missing=[t for t in expect if t not in output],

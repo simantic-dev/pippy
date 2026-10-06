@@ -193,7 +193,7 @@ class FirmwareItem(_ReportingItem):
             pytest.skip("backend='rust' does not capture bus frames for expect_frames yet")
         started = time.monotonic()
         try:
-            records, _ = run_scenario(scenario, manifest.timeout, base=Path(self.config.rootpath))
+            records = run_scenario(scenario, manifest.timeout, base=self.config.rootpath).uart_records
         except NotSupported as exc:
             pytest.skip(str(exc))
         over_budget = time.monotonic() - started > manifest.wall_budget

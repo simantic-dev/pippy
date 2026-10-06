@@ -97,9 +97,9 @@ and `uart=` are the defaults.
 | --- | --- | --- |
 | UART text: `expect()`, manifest `expect` / `expect_absent` | yes | yes |
 | Bus frames (SPI, I2C, CAN, BLE, Ethernet): `frames()`, manifest `expect_frames` | yes | no: `frames()` is empty, a manifest with `expect_frames` is skipped |
-| `interrupts()` | yes | yes, `Sim` only |
-| `symbol_trace()` | yes | yes, `Sim` only |
-| `memory_trace()` | no | yes, `Sim` only |
+| `interrupts()` | yes | yes, `Sim` and `run_scenario` |
+| `symbol_trace()` | yes | yes, `Sim` and `run_scenario` |
+| `memory_trace()` | no | yes, `Sim` and `run_scenario` |
 | `itm()` | no | yes, `Sim` only |
 | `read_memory()` / `read_u32()` / `symbol()` | yes | yes, `Sim` only |
 | `threads()` / `heap()` | yes | yes, `Sim` only |
@@ -107,16 +107,35 @@ and `uart=` are the defaults.
 | `inject_gpio()` | yes | yes |
 | `inject_can()` / `inject_radio()` | yes | no: raises `NotSupported` |
 | `parts=` and `networkServices` | yes | no: raises `NotSupported` (a manifest is skipped) |
-| Several machines joined by `media` | yes | `test.yaml` manifests only; `Sim` drives one machine |
+| Several machines joined by `media` | yes | `run_scenario` and `test.yaml` manifests; `Sim` drives one machine |
 
 "`Sim` only" means a Python test holding a `Sim` can ask for it; a `test.yaml`
 manifest has keys for UART text and bus frames and nothing else, on either
 engine.
 
-On the Rust engine a manifest runs in one call, to its timeout, and its UART
-output is checked afterwards. That call can run several machines, but it cannot
-be paused, so nothing can be read or injected part-way. `Sim` needs exactly
-that, and its Rust session holds a single machine.
+On the Rust engine a scenario with several machines runs in one call, to its
+timeout, and what happened is read afterwards. It cannot be paused, so nothing
+can be read or injected part-way; `Sim` needs exactly that, and its Rust
+session holds a single machine. A manifest runs this way, and so does
+`run_scenario`, which also returns the traces:
+
+```python
+run = simantic.run_scenario(
+    {"machines": {"nodea": {"mcu": "STM32F407VG", "elf": "node.elf"},
+                  "nodeb": {"mcu": "STM32F407VG", "elf": "node.elf"}},
+     "media": [{"type": "can", "connect": ["nodea.can1", "nodeb.can1"]}]},
+    timeout=10,                                  # virtual seconds
+    trace_symbols=["can_send"], trace_memory=["rx_count:4"], trace_interrupts=True)
+
+assert "[nodeb] RESULT: PASS" in run.output      # UART text, one "[machine] " prefixed line each
+sends = [h for h in run.symbol_trace if h["machine"] == "nodea"]
+```
+
+`run.uart_records`, `run.interrupts`, `run.symbol_trace` and `run.memory_trace`
+hold the same records the `Sim` methods of those names return, for every
+machine, in virtual-time order. Tracing never halts a machine, and a traced
+run prints what an untraced one does. A symbol is traced on every machine
+whose ELF defines it.
 
 ## Timing assertions and the quantum
 
