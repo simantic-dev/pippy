@@ -87,3 +87,18 @@ def test_start_error_names_the_fix_for_a_stale_engine():
     assert "simantic install engine --force" in stale
     assert "STM32F4_RCC" in stale and "selection report" not in stale
     assert _start_error(Exception("no such file")) == "could not start the simulation: no such file"
+
+
+def test_needs_newer_engine_reads_the_models_minimum(tmp_path, monkeypatch):
+    from simantic.session import _needs_newer_engine
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".sim_cache").mkdir()
+    (tmp_path / ".sim_cache" / "stm32h753zi.json").write_text('{"min_sim_version": "0.6.3"}')
+    (tmp_path / ".sim_cache" / "stm32f401re.json").write_text('{"min_sim_version": null}')
+    old, new = tmp_path / "0.6.1", tmp_path / "0.6.3"
+    msg = _needs_newer_engine(["STM32F401RE", "STM32H753ZI"], old)
+    assert "STM32H753ZI needs engine 0.6.3 or newer; 0.6.1 is installed" in msg
+    assert "simantic install engine --force" in msg
+    assert _needs_newer_engine(["STM32H753ZI"], new) is None
+    assert _needs_newer_engine(["NOT-CACHED"], old) is None
+    assert _needs_newer_engine(["STM32H753ZI"], tmp_path / "publish") is None   # dev engine: no version
