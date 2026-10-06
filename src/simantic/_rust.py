@@ -223,8 +223,12 @@ class RustBackend:
     def inject_gpio(self, peripheral: str, pin: int, state: bool, machine: str | None) -> None:
         self._s.inject_gpio(peripheral, int(pin), bool(state))
 
-    def inject_can(self, *_a, **_k) -> None:
-        raise NotSupported("backend='rust' has no CAN injection yet")
+    def inject_can(self, peripheral: str, can_id: int, data: bytes, extended: bool, remote: bool,
+                   fd: bool, brs: bool, machine: str | None) -> None:
+        try:
+            self._s.inject_can(peripheral, int(can_id), bytes(data), extended, remote, fd, brs)
+        except AttributeError:
+            raise NotSupported("CAN injection needs a newer Rust engine") from None
 
     def inject_radio(self, *_a, **_k) -> None:
         raise NotSupported("backend='rust' has no radio injection yet")

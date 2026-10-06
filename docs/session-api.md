@@ -105,7 +105,8 @@ and `uart=` are the defaults.
 | `threads()` / `heap()` | yes | yes, `Sim` only |
 | `logs()` | yes | no: always empty |
 | `inject_gpio()` | yes | yes |
-| `inject_can()` / `inject_radio()` | yes | no: raises `NotSupported` |
+| `inject_can()` | yes | yes |
+| `inject_radio()` | yes | no: raises `NotSupported` |
 | `parts=` and `networkServices` | yes | no: raises `NotSupported` (a manifest is skipped) |
 | Several machines joined by `media` | yes | `run_scenario` and `test.yaml` manifests; `Sim` drives one machine |
 
