@@ -2,8 +2,8 @@
 
 `Sim` is the Python face of the simulator — the same capabilities as the
 `sim` CLI, as a live object. No test framework is involved; pytest, a plain
-script, a notebook or a process pool all use it the same way. It starts `sim --control-stdio`,
-which builds the machine(s) and holds them at reset; every method either
+script, a notebook or a process pool all use it the same way. It builds the
+machine(s) inside your Python process and holds them at reset; every method either
 advances virtual time by an exact, requested amount or observes state without
 advancing it. Between calls nothing runs, so a script is deterministic and
 Python think-time is free.
@@ -26,7 +26,7 @@ Sim(scenario={...}, machine="c6", uart="uart0", cwd=fixture_dir)
 ```
 
 Scenario dicts use the `sim --scenario` schema verbatim: `machines`
-(`repl`/`mcu` + `parts` + `overlay` + `elf` + `symbolsElfPath`), `media` (BLE/CAN/Ethernet/UART
+(`mcu` + `parts` + `overlay` + `elf` + `symbolsElfPath`), `media` (BLE/CAN/Ethernet/UART
 buses), `networkServices` (scripted peers), `quantum`. Relative paths resolve
 against `cwd=` (default: the process cwd).
 
@@ -39,8 +39,12 @@ an index, or a pin like `"PC4"` when several devices share the bus),
 medium), `sd-card` (`bus`, `size` such as `"16MiB"`, `image`: a formatted card image, since a blank card has nothing to mount), `peripheral` (`address`,
 `size`, `script`, optional `irq` list), `model` (a stock part: `class` such as
 `Sensors.BMP388`, `bus`, `address`, `properties`).
-`overlay` is a raw platform fragment for anything that list cannot express.
-Needs engine 0.5.17+.
+`overlay` is a board file (`.board`), a raw platform fragment for anything that
+list cannot express. Needs engine 0.5.17+.
+
+A model can require a newer engine than the one installed (the STM32H7 parts
+need 0.6.3). `Sim` then raises `SimError` naming the version it needs; update
+with `simantic install engine --force`.
 
 `symbols_elf=` (single-machine form) / `symbolsElfPath` (scenario machine
 entries — same key as the CLI's scenario YAML, so a scenario dict is

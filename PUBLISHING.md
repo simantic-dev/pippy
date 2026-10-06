@@ -1,8 +1,8 @@
 # Publishing `simantic` to PyPI
 
-First-time setup, then the per-release loop. Steps marked **[you]** need a
+One-time setup (done; kept for reference), then the per-release loop. Steps marked **[you]** need a
 human with the accounts; everything else is automated in
-`.github/workflows/python.yml`.
+`.github/workflows/ci.yml`.
 
 ## One-time setup
 
@@ -18,18 +18,15 @@ the first upload so a mistake is not permanent.
 
 ### 2. Claim the name **[you]**
 
-`simantic` was unregistered as of this writing. Names are first-come and a
-published version number can never be reused or overwritten — only yanked —
-so publish `0.1.0` to TestPyPI first, confirm it looks right, and only then
-push the real tag. Claiming early is cheap insurance against someone else
-taking it.
+Done: `simantic` is ours on PyPI. A published version number can never be
+reused or overwritten — only yanked — so check the version before pushing a
+tag.
 
 ### 3. Configure Trusted Publishing **[you]**
 
 This replaces API tokens with short-lived OIDC credentials, so there is no
 long-lived secret in the repo. On PyPI, go to your account's **Publishing**
-page and add a *pending* publisher (pending = the project does not exist
-yet, which is the case before the first upload):
+page and add a publisher:
 
 | Field | Value |
 |---|---|
@@ -69,8 +66,8 @@ uv run --with simantic --index https://test.pypi.org/simple/ \
 3. Tag and push:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 The workflow tests on Linux/macOS/Windows across 3.11 and 3.13, builds the
@@ -79,9 +76,9 @@ sdist and wheel, runs `twine check`, and uploads via trusted publishing.
 ## Versioning
 
 Semantic versioning on the SDK's own surface, which is independent of the
-`analog-cli` version it drives. The coupling that matters is the report
-schema: `simantic` speaks `analog-cli.test-report/1` and refuses anything
-else, so a schema revision in the CLI is a major bump here.
+engine version it drives: the package is 0.4.x while the engine is 0.6.x, and
+the two are not meant to match. The engine a model needs is declared by the
+model (`min_sim_version`), not by this package's version.
 
 Stay on `0.x` until the API has survived real use. Pre-1.0 signals that
 breaking changes can still happen, which is honest for a first release.
