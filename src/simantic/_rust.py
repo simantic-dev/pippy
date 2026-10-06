@@ -19,6 +19,14 @@ from .mcu import SimError
 SLICE_SECONDS = 0.001
 
 
+_CORTEX_M_EXCEPTIONS = {2: "NMI", 3: "HardFault", 4: "MemManage", 5: "BusFault", 6: "UsageFault",
+                        11: "SVCall", 12: "DebugMonitor", 14: "PendSV", 15: "SysTick"}
+
+
+def _exception_name(vector: int) -> str | None:
+    return f"IRQ{vector - 16}" if vector >= 16 else _CORTEX_M_EXCEPTIONS.get(vector)
+
+
 class NotSupported(SimError):
     """The Rust backend has no implementation of this yet (simantic-core#183)."""
 
@@ -30,8 +38,8 @@ class RustBackend:
             raise NotSupported("backend='rust' runs one machine; multi-machine scenarios need backend='renode'")
         if media or services:
             raise NotSupported("backend='rust' has no media or network services yet (simantic-core#183)")
-        if trace_symbols or trace_memory or trace_interrupts:
-            raise NotSupported("backend='rust' has no symbol/memory/interrupt tracing yet (simantic-core#183)")
+        if trace_symbols or trace_memory:
+            raise NotSupported("backend='rust' has no symbol/memory tracing yet (simantic-core#183)")
         m = machines[0]
         if m.get("symbolsElfPath"):
             raise NotSupported("backend='rust' has no symbols_elf support yet (simantic-core#183)")
@@ -53,6 +61,8 @@ class RustBackend:
         if lost:
             raise NotSupported(f"backend='rust' has no model for {', '.join(lost)}; use backend='renode'")
         self._symbols: dict[str, int] | None = None
+        self._trace_interrupts, self._interrupts_seen = trace_interrupts, 0
+        self._cortex_m = "CPU.CortexM" in text
         self._records: dict[str, list[dict]] = {k: [] for k in ("uart", "frames", "logs", "interrupts", "symbol_trace")}
         self._records["logs"] = [{"t": 0.0, "level": "Warning", "source": "platform", "message": w}
                                  for w in [*self._s.warnings(), *(f"{e}: not modeled, reads as zero" for e in skipped)]]
@@ -103,6 +113,15 @@ class RustBackend:
                   "text": bytes(data).decode("latin-1"), "bytes": bytes(data)}
                  for t, label, data in self._s.take_uart()]
         self._records["uart"].extend(fresh)
+        if self._trace_interrupts:
+            # ponytail: the engine returns its whole log each call; give the
+            # binding a cursor if a long traced run makes this copy show up.
+            log = self._s.interrupts()
+            self._records["interrupts"].extend(
+                {"t": t, "machine": self.machines[0], "direction": "Enter" if entry else "Exit",
+                 "exception": vector, "name": _exception_name(vector) if self._cortex_m else None}
+                for t, _core, vector, entry in log[self._interrupts_seen:])
+            self._interrupts_seen = len(log)
         return fresh
 
     # -- observation ------------------------------------------------------
@@ -127,11 +146,24 @@ class RustBackend:
         except KeyError:
             raise SimError(f"no symbol {name!r} in the ELF") from None
 
-    def threads(self, machine: str | None):
-        raise NotSupported("backend='rust' has no RTOS thread view through Sim yet (simantic-core#183)")
+    def threads(self, machine: str | None) -> dict | None:
+        tasks = self._s.tasks()
+        if tasks is None:
+            return None
+        return {"rtos": self._s.rtos_name(),
+                "threads": [{"address": tid, "name": name, "state": state, "priority": priority, "core": core,
+                             "stackStart": base, "stackSize": size, "stackHighWaterMarkBytes": peak}
+                            for tid, name, state, priority, core, base, size, peak in tasks],
+                # Without the kernel's all-threads list only running threads are visible.
+                "truncated": not self._s.task_enumeration_available()}
 
-    def heap(self, machine: str | None):
-        raise NotSupported("backend='rust' has no heap report through Sim yet (simantic-core#183)")
+    def heap(self, machine: str | None) -> dict | None:
+        report = self._s.heap()
+        if report is None:
+            return None
+        allocator, free, minimum_free, pool, _regions = report
+        return {"allocator": allocator, "arenaSizeBytes": pool, "usedBytes": pool - free,
+                "freeBytes": free, "minimumFreeBytes": minimum_free}
 
     def close(self) -> None:
         self._s = None

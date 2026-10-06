@@ -97,6 +97,21 @@ class FakeSession:
     def read_memory(self, addr, n):
         return bytes(range(n))
 
+    def interrupts(self):
+        return [e for e in [(0.001, 0, 15, True), (0.0015, 0, 15, False), (0.004, 0, 54, True)] if e[0] <= self.t]
+
+    def rtos_name(self):
+        return "Zephyr"
+
+    def task_enumeration_available(self):
+        return False
+
+    def tasks(self):
+        return [(0x20000100, "main", "running", 0, 0, 0x20001000, 1024, 200)]
+
+    def heap(self):
+        return ("sys_heap", 3000, None, 4096, 1)
+
 
 @pytest.fixture
 def fake_engine(monkeypatch, tmp_path):
@@ -136,10 +151,10 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
 def test_unsupported_calls_say_so(fake_engine):
     mcu, elf = fake_engine
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
-        with pytest.raises(NotSupported, match="core#183"):
-            sim.threads()
         with pytest.raises(NotSupported):
             sim.inject_can("can1", 0x123, b"\x01")
+    with pytest.raises(NotSupported, match="core#183"):
+        Sim(elf=elf, mcu=mcu, backend="rust", trace_symbols=["main"])
     with pytest.raises(NotSupported, match="one machine"):
         Sim(scenario={"machines": {"a": {"elf": str(elf), "mcu": mcu},
                                    "b": {"elf": str(elf), "mcu": mcu}}}, backend="rust")
@@ -231,3 +246,20 @@ def test_records_are_paged_not_returned_whole(fake_engine):
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         page, cursor, truncated = sim._b.records("uart", 0, 1)
         assert len(page) <= 1 and cursor <= 1 and isinstance(truncated, bool)
+
+
+def test_threads_heap_and_interrupts_on_rust(fake_engine):
+    mcu, elf = fake_engine
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust", trace_interrupts=True) as sim:
+        sim.run_for(0.002)
+        assert [(r["direction"], r["name"]) for r in sim.interrupts()] == [("Enter", "SysTick"), ("Exit", "SysTick")]
+        sim.run_for(0.003)
+        assert [(r["exception"], r["name"]) for r in sim.interrupts()] == [(54, "IRQ38")]
+        threads = sim.threads()
+        assert threads["rtos"] == "Zephyr" and threads["truncated"]
+        assert threads["threads"][0]["name"] == "main" and threads["threads"][0]["stackHighWaterMarkBytes"] == 200
+        assert sim.heap() == {"allocator": "sys_heap", "arenaSizeBytes": 4096, "usedBytes": 1096,
+                              "freeBytes": 3000, "minimumFreeBytes": None}
+    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+        sim.run_for(0.01)
+        assert sim.interrupts() == []
