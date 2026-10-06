@@ -171,6 +171,11 @@ on each and the engine name appears in the test id. Anything an engine cannot do
 is reported as a skip with the reason, so one suite can target both and stay
 honest about what each covers.
 
+`test.yaml` manifests follow the same option. On `rust` a manifest, including a
+multi machine one with `media:`, runs to its timeout in one call and its UART
+output is checked afterwards; `expect_frames` checks are skipped there for now.
+`simantic.run_firmware(..., backend="rust")` does the same for a single ELF.
+
 One tip worth real time: on the Renode engine, every hand off between Python and
 the simulation costs a few hundred microseconds. Reading is free, pausing and
 resuming is not. Prefer `expect()`, which crosses once, over a loop that polls

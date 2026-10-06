@@ -7,6 +7,8 @@ nothing — the gap list is simantic-core#183.
 
 from __future__ import annotations
 
+import math
+import os
 import re
 import time
 from pathlib import Path
@@ -32,6 +34,50 @@ _NEWER_ENGINE = "on backend='rust' needs a newer Rust engine: run `simantic inst
 
 class NotSupported(SimError):
     """The Rust backend has no implementation of this yet (simantic-core#183)."""
+
+
+def run_scenario(scenario: dict, timeout: float, *, base: Path, engine_dir=None) -> tuple[list[dict], list[str]]:
+    """Run every machine of `scenario` with its media to `timeout` virtual
+    seconds, in one call: the runner behind the Rust `sim --scenario`.
+    Returns the UART records `Sim.uart_records()` would and the engine's warnings.
+
+    Nothing can be sent or read while it runs; that is what `Sim` is for, and
+    on this backend `Sim` drives one machine.
+    """
+    engine = load_rust(engine_dir)
+    if not hasattr(engine, "run_scenario"):
+        raise NotSupported(f"a one-shot scenario {_NEWER_ENGINE}")
+    if scenario.get("networkServices"):
+        raise NotSupported("backend='rust' does not take network services through simantic yet")
+    machines, declared = [], set()
+    for name, m in scenario["machines"].items():
+        if m.get("parts"):
+            raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
+        overlay = base / m["overlay"] if m.get("overlay") else None
+        if overlay:
+            declared |= {f"machine '{name}': {entry}" for entry in re.findall(r"^(\w+)\s*:", overlay.read_text(), re.M)}
+        machines.append((name, _replx.platform_text(mcu=m["mcu"], overlay=overlay), (base / m["elf"]).read_bytes()))
+    media = [(med["type"], [tuple(end.split(".", 1)) for end in med.get("connect") or []])
+             for med in scenario.get("media") or []]
+    # A net end is `machine.peripheral.pin`.
+    nets = [[(m, p, int(pin)) for m, p, pin in (end.rsplit(".", 2) for end in net)] for net in scenario.get("nets") or []]
+    # Script paths inside an overlay are relative to `base`, and the engine
+    # opens them relative to the working directory.
+    cwd = os.getcwd()
+    os.chdir(base)
+    try:
+        uarts, runs, warnings, skipped = engine.run_scenario(
+            machines, media, nets, [], max(1, math.ceil(timeout)), scenario.get("quantum"))
+    except Exception as exc:
+        raise SimError(str(exc)) from exc
+    finally:
+        os.chdir(cwd)
+    lost = [s for s in skipped if s.split(" (")[0] in declared]
+    if lost:
+        raise NotSupported(f"backend='rust' has no model for {', '.join(lost)}; use backend='renode'")
+    records = [{"t": t, "machine": uarts[i][0], "label": uarts[i][1],
+                "text": bytes(data).decode("latin-1"), "bytes": bytes(data)} for t, i, data in runs]
+    return records, [*warnings, *(f"{s}: not modeled, reads as zero" for s in skipped)]
 
 
 class RustBackend:

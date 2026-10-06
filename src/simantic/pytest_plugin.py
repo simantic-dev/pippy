@@ -17,7 +17,7 @@ import pytest
 
 from ._locate import BinaryNotFound
 from .fixtures import ModelLibraryUnavailable, UnsupportedManifest, load_manifest
-from .mcu import ServerNotConfigured, SimError, run as run_firmware
+from .mcu import ServerNotConfigured, SimError, render_uart, run as run_firmware
 from . import telemetry
 
 
@@ -79,25 +79,12 @@ class _ReportingItem(pytest.Item):
 
 class FixtureYamlFile(pytest.File):
     def collect(self):
-        yield FirmwareItem.from_parent(self, name=self.path.parent.name)
-
-
-def render_uart(records: list[dict], multi: bool) -> str:
-    """UART records as the `sim --ascii --only-messages` lines a manifest's
-    `expect` strings are written against: per (machine, label) stream, lines on
-    newline, carriage returns dropped, other non-printables as '.', and a
-    `[machine] ` prefix when the scenario has more than one machine."""
-    streams: dict[tuple[str, str], str] = {}
-    for r in records:
-        key = (r["machine"], r["label"])
-        streams[key] = streams.get(key, "") + r["text"]
-    out = []
-    for (machine, _label), text in streams.items():
-        prefix = f"[{machine}] " if multi else ""
-        for line in text.replace("\r", "").split("\n"):
-            clean = "".join(c if 0x20 <= ord(c) <= 0x7E or c == "\t" else "." for c in line)
-            out.append(prefix + clean)
-    return "\n".join(out)
+        choice = self.config.getoption(BACKEND_OPTION)
+        name = self.path.parent.name
+        for backend in ["renode", "rust"] if choice == "both" else [choice]:
+            item = FirmwareItem.from_parent(self, name=f"{name}[{backend}]" if choice == "both" else name)
+            item.backend = backend
+            yield item
 
 
 def render_frames(frames: list[dict], multi: bool) -> str:
@@ -148,6 +135,8 @@ class FirmwareItem(_ReportingItem):
     firmware's UARTs and CAN controllers.
     """
 
+    backend = "renode"
+
     def runtest(self) -> None:
         from .session import Sim
 
@@ -166,11 +155,14 @@ class FirmwareItem(_ReportingItem):
             scenario = manifest.scenario(Path(tmp))
             first = next(iter(scenario["machines"]))
             try:
-                with Sim(scenario=scenario, machine=first, cwd=str(self.config.rootpath)) as sim:
-                    over_budget = not _run_within(sim, manifest.timeout, manifest.wall_budget)
-                    uart = render_uart(sim.uart_records(from_start=True), not manifest.single)
-                    frames = render_frames(sim.frames(from_start=True), not manifest.single)
-                    reached = sim.time
+                if self.backend == "rust":
+                    uart, frames, over_budget, reached = self._run_on_rust(manifest, scenario)
+                else:
+                    with Sim(scenario=scenario, machine=first, cwd=str(self.config.rootpath)) as sim:
+                        over_budget = not _run_within(sim, manifest.timeout, manifest.wall_budget)
+                        uart = render_uart(sim.uart_records(from_start=True), not manifest.single)
+                        frames = render_frames(sim.frames(from_start=True), not manifest.single)
+                        reached = sim.time
             except (BinaryNotFound, ModelLibraryUnavailable, ServerNotConfigured) as exc:
                 pytest.skip(str(exc))
             except SimError as exc:
@@ -189,6 +181,23 @@ class FirmwareItem(_ReportingItem):
             if manifest.expect_frames or manifest.expect_frames_absent:
                 report += "\n--- frames ---\n" + (frames or "<none>")
             raise SimulationFailure(report)
+
+    def _run_on_rust(self, manifest, scenario):
+        """The whole scenario in one call on the Rust engine. It cannot be
+        stopped part-way, so the wall budget is judged after the fact."""
+        import time
+
+        from ._rust import NotSupported, run_scenario
+
+        if manifest.expect_frames or manifest.expect_frames_absent:
+            pytest.skip("backend='rust' does not capture bus frames for expect_frames yet")
+        started = time.monotonic()
+        try:
+            records, _ = run_scenario(scenario, manifest.timeout, base=Path(self.config.rootpath))
+        except NotSupported as exc:
+            pytest.skip(str(exc))
+        over_budget = time.monotonic() - started > manifest.wall_budget
+        return render_uart(records, not manifest.single), "", over_budget, float(manifest.timeout)
 
     def reportinfo(self):
         return self.path, 0, f"firmware: {self.name}"

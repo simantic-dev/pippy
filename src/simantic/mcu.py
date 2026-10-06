@@ -28,8 +28,9 @@ from . import telemetry
 ENV_VAR = "SIMANTIC_SIM"
 BINARY = "sim"
 
-#: Values accepted by `sim --backend`. Which are available, and which targets
-#: each supports, depends on the installed build — see its --help.
+#: The engines `run(backend=)` can use: "tlib" is the default, driven through
+#: the `sim` binary; "rust" is the Rust engine, run in this process. They do
+#: not support the same targets and peripherals.
 BACKENDS = ("tlib", "rust")
 
 
@@ -75,6 +76,24 @@ class SimRun:
         return "\n".join(lines)
 
 
+def render_uart(records: list[dict], multi: bool) -> str:
+    """UART records as the `sim --ascii --only-messages` lines a manifest's
+    `expect` strings are written against: per (machine, label) stream, lines on
+    newline, carriage returns dropped, other non-printables as '.', and a
+    `[machine] ` prefix when the scenario has more than one machine."""
+    streams: dict[tuple[str, str], str] = {}
+    for r in records:
+        key = (r["machine"], r["label"])
+        streams[key] = streams.get(key, "") + r["text"]
+    out = []
+    for (machine, _label), text in streams.items():
+        prefix = f"[{machine}] " if multi else ""
+        for line in text.replace("\r", "").split("\n"):
+            clean = "".join(c if 0x20 <= ord(c) <= 0x7E or c == "\t" else "." for c in line)
+            out.append(prefix + clean)
+    return "\n".join(out)
+
+
 def sim_binary(explicit: str | os.PathLike[str] | None = None) -> Path:
     """Resolve the sim binary, or raise BinaryNotFound."""
     return locate(BINARY, ENV_VAR, explicit)
@@ -109,6 +128,14 @@ def run(
     if backend is not None and backend not in BACKENDS:
         raise ValueError(f"backend must be one of {BACKENDS}, got {backend!r}")
     telemetry.record("sdk.run_firmware")
+    if backend == "rust":
+        from ._rust import run_scenario
+
+        records, _ = run_scenario({"machines": {"machine": {"mcu": mcu, "elf": str(elf)}}}, timeout, base=Path.cwd())
+        output = render_uart(records, multi=False)
+        return SimRun(output=output, exit_code=0, runner="rust engine",
+                      missing=[t for t in expect if t not in output],
+                      forbidden=[t for t in expect_absent if t in output])
     with tempfile.TemporaryDirectory() as tmp:
         out_path = Path(tmp) / "uart.txt"
         cmd = [
@@ -126,8 +153,6 @@ def run(
             cmd.append("--ascii")
         if only_messages:
             cmd.append("--only-messages")
-        if backend is not None:
-            cmd += ["--backend", backend]
 
         # Give the subprocess room past the simulated timeout before treating
         # it as hung: --timeout bounds simulated time, not wall-clock.
