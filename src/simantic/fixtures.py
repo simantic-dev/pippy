@@ -1,39 +1,21 @@
-"""test.yaml fixture manifests: loading, and resolving from a model library.
+"""test.yaml fixture manifests: loading.
 
-A fixture names an MCU (`mcu: STM32F401RE`), not a platform file. Normally
-`sim` resolves that name for you against your account; models are not
-distributed with this package.
-
-If you have a local model library, point $SIMANTIC_MCU_LIB at it and models
-resolve from there instead, without a round trip. That path is also what a
-fixture's `overlay` fragment needs, since an overlay edits platform text
-before it reaches the simulator. Resolution is delegated to the library's own
-tooling rather than reimplemented here, so the two cannot drift.
+A fixture names an MCU (`mcu: STM32F401RE`), not a platform file. The engine
+resolves that name against your account; models are not distributed with
+this package.
 """
 
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
-import tempfile
 from dataclasses import dataclass
-from functools import cache
 from pathlib import Path
 
 import yaml
 
-#: Points at a local model library. Optional: without it, models resolve
-#: through `sim` instead.
-MCU_LIB_ENV = "SIMANTIC_MCU_LIB"
-
 #: Default wall-clock budgets for a manifest run (seconds). Radios cost more.
 WALL_WIRED_S = 30
 WALL_WIRELESS_S = 100
-
-
-class ModelLibraryUnavailable(RuntimeError):
-    """No usable model library, so MCU names cannot be resolved locally."""
 
 
 @dataclass(frozen=True)
@@ -208,65 +190,3 @@ def load_manifest(path: str | os.PathLike[str]) -> Manifest:
         network_services=list(data.get("networkServices") or []),
         sparse_files=dict(data.get("sparse_files") or {}),
     )
-
-
-def mcu_lib_root() -> Path:
-    """The configured model library, or raise ModelLibraryUnavailable."""
-    configured = os.environ.get(MCU_LIB_ENV)
-    if not configured:
-        raise ModelLibraryUnavailable(
-            f"set ${MCU_LIB_ENV} to a local model library to resolve MCU models"
-        )
-    root = Path(configured)
-    if not (root / "scripts" / "parse_replx.py").exists():
-        raise ModelLibraryUnavailable(
-            f"${MCU_LIB_ENV} is {root}, which has no scripts/parse_replx.py "
-            "(submodule not initialised?)"
-        )
-    return root
-
-
-@cache
-def resolved_models() -> Path:
-    """Resolve every model once per process; return the output dir.
-
-    parse_replx.py fills `using` directives and strips comments. The result
-    is cached for the process because resolving the whole library per test
-    would dominate a suite's runtime.
-    """
-    root = mcu_lib_root()
-    dest = Path(tempfile.mkdtemp(prefix="simantic-models-"))
-    subprocess.run(
-        [sys.executable, str(root / "scripts" / "parse_replx.py"), "models.yaml", str(dest)],
-        cwd=root,
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    return dest
-
-
-def platform_for(manifest: Manifest, workdir: Path) -> Path:
-    """The .replx to hand `sim --repl`, with any overlay fragment appended."""
-    return platform_path(manifest.mcu, manifest.overlay_path, workdir)
-
-
-def platform_path(mcu: str, overlay: Path | None, workdir: Path) -> Path:
-    """Resolve `mcu` from the local model library, appending `overlay` if given."""
-    base = resolved_models() / f"{mcu}.replx"
-    if not base.exists():
-        raise ModelLibraryUnavailable(f"mcu {mcu} is not in the model library")
-
-    if overlay is None:
-        return base
-
-    # The platform grammar has no comment syntax — `//` and `#` notes are
-    # stripped during resolution — so comment-only lines must go before the
-    # fragment is appended.
-    body = "\n".join(
-        line
-        for line in overlay.read_text().splitlines()
-        if not line.lstrip().startswith(("#", "//"))
-    )
-    merged = workdir / f"{mcu}-overlaid.replx"
-    merged.write_text(base.read_text().rstrip() + "\n\n" + body.strip() + "\n")
-    return merged

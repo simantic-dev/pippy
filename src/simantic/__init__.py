@@ -19,7 +19,6 @@ fixture manifests into individually addressable pytest items.
 from ._locate import BinaryNotFound
 from .fixtures import (
     Manifest,
-    ModelLibraryUnavailable,
     UnsupportedManifest,
     load_manifest,
 )
@@ -34,7 +33,6 @@ __version__ = "0.4.0"
 __all__ = [
     # firmware
     "Manifest",
-    "ModelLibraryUnavailable",
     "ServerNotConfigured",
     "SimError",
     "SimRun",

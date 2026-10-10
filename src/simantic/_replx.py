@@ -5,8 +5,7 @@ them. The Rust engine parses plain `.repl`, so the same rendering happens
 here: every `{{a:b:default}}` placeholder becomes its default, and a default
 that is an arithmetic expression (`84000000 / 1000000 * 1.25`) is evaluated.
 Model names resolve the way `sim --mcu` does — `~/.sim_cache`, else the
-backend with stored credentials, then cached — or from a local model library
-when $SIMANTIC_MCU_LIB is set.
+backend with stored credentials, then cached.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ import urllib.request
 from pathlib import Path
 
 from . import auth
-from .fixtures import MCU_LIB_ENV, platform_path
 from .mcu import SimError
 
 MCU_DETAILS_URL = "https://drjdhqfvrttolueolzif.supabase.co/functions/v1/get-mcu-details"
@@ -64,9 +62,9 @@ def cache_dir() -> Path:
 
 def model_replx(mcu: str, *, use_cache: bool = True) -> str:
     """The `.replx` text for a model name, like `sim --mcu`."""
-    if os.environ.get(MCU_LIB_ENV):
-        return platform_path(mcu, None, Path.cwd()).read_text()
     cached = cache_dir() / f"{mcu.lower()}.json"
+    if cached.resolve().parent != cache_dir().resolve():
+        raise SimError(f"invalid model name {mcu!r}")
     if use_cache and cached.exists():
         replx = json.loads(cached.read_text()).get("replx")
         if replx:

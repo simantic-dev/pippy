@@ -8,7 +8,6 @@ def test_unauthenticated_model_error_says_what_to_do(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("SIMANTIC_HOME", str(tmp_path))
-    monkeypatch.delenv("SIMANTIC_MCU_LIB", raising=False)
     with pytest.raises(SimError) as caught:
         _replx.model_replx("ESP32-C3")
 

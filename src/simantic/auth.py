@@ -138,7 +138,10 @@ def save(token: str, email: str) -> Path:
     path = sim_id_path()
     tmp = path.with_suffix(".tmp")
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Unlink then O_EXCL so the mode is applied to a file we created, not
+        # inherited from (or redirected through) something already there.
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             os.write(fd, f"EMAIL={email}\nAPI_KEY={token}\n".encode())
         finally:

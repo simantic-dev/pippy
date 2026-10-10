@@ -172,11 +172,32 @@ def test_matching_checksum_is_accepted(monkeypatch):
     assert install.download(artifact) == payload
 
 
-def test_manifest_without_a_checksum_still_installs(monkeypatch):
-    """Not every published artifact carries one; absence must not block."""
-    monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(b"x"))
-    artifact = install.Artifact("0.4.0", "https://example.invalid/x", None)
-    assert install.download(artifact) == b"x"
+def test_manifest_without_a_checksum_is_refused():
+    """The checksum is the only thing that makes the bucket trustworthy, so
+    a manifest entry that omits it cannot install anything."""
+    manifest = {"version": "0.4.0", "artifacts": {"osx-arm64": {"url": "https://example.invalid/x"}}}
+    with pytest.raises(install.InstallError, match="no sha256"):
+        install._resolve(manifest, "sim", "osx-arm64")
+
+
+def test_manifest_http_error_is_an_install_error(monkeypatch):
+    def urlopen(*a, **k):
+        raise install.urllib.error.HTTPError("u", 404, "nf", {}, None)
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    with pytest.raises(install.InstallError, match="HTTP 404"):
+        install.fetch_manifest("sim")
+
+
+def test_staging_symlink_is_not_followed(monkeypatch, home, tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"keep")
+    install.bin_dir().mkdir(parents=True)
+    (install.bin_dir() / ".sim.incoming").symlink_to(victim)
+    monkeypatch.setattr(install, "resolve", lambda *a, **k: install.Artifact("0.4.0", "u", "00" * 32))
+    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: b"ELF")
+    install.install("sim")
+    assert victim.read_bytes() == b"keep"
+    assert (install.bin_dir() / "sim").read_bytes() == b"ELF"
 
 
 def _fake_urlopen(payload: bytes):
@@ -244,12 +265,15 @@ def test_ambiguous_archive_is_refused():
 
 
 def test_install_writes_an_executable_and_is_found(monkeypatch, home):
+    payload = zipped("sim", b"ELF")
     monkeypatch.setattr(
         install,
         "resolve",
-        lambda b, **k: install.Artifact("0.4.0", "https://example.invalid/x", None),
+        lambda b, **k: install.Artifact(
+            "0.4.0", "https://example.invalid/x", hashlib.sha256(payload).hexdigest()
+        ),
     )
-    monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(zipped("sim", b"ELF")))
+    monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(payload))
 
     path = install.install("sim")
     assert path.read_bytes() == b"ELF"
@@ -353,7 +377,7 @@ ENGINE_FILES = {
 def fake_release(monkeypatch, files=ENGINE_FILES, version="0.9.0"):
     seen = []
     monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: (
-        seen.append(rid), install.Artifact(version=version, url="https://releases.example/engine.zip", sha256=None))[1])
+        seen.append(rid), install.Artifact(version=version, url="https://releases.example/engine.zip", sha256="00" * 32))[1])
     monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip(files))
     return seen
 
@@ -373,8 +397,21 @@ def test_install_engine_asks_for_the_engine_rid(home, monkeypatch):
     assert seen == [f"engine-{install.current_rid()}"]
 
 
+def test_version_order_ignores_junk_and_prereleases():
+    names = ["zzz", "0.6.2-rc1", "0.6.2", "0.10.0", "0.9.1"]
+    assert max(names, key=install._version_key) == "0.10.0"
+    assert max(["0.6.2-rc1", "0.6.2"], key=install._version_key) == "0.6.2"
+    assert max(["zzz", "0.6.2"], key=install._version_key) == "0.6.2"
+
+
+def test_engine_version_must_be_a_plain_directory_name(home, monkeypatch):
+    fake_release(monkeypatch, version="../../lib")
+    with pytest.raises(install.InstallError, match="not a valid directory name"):
+        install.install_engine()
+
+
 def test_installed_engine_picks_the_newest_version(home, monkeypatch):
-    for v in ("0.9.0", "0.10.0", "0.9.1"):
+    for v in ("0.9.0", "0.10.0", "0.9.1", "zzz"):
         d = install.engine_root() / v
         d.mkdir(parents=True)
         (d / "Simantic.Core.dll").write_bytes(b"")
@@ -384,7 +421,7 @@ def test_installed_engine_picks_the_newest_version(home, monkeypatch):
 
 def test_engine_archive_paths_must_stay_inside(home, monkeypatch):
     monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
-        version="0.9.0", url="u", sha256=None))
+        version="0.9.0", url="u", sha256="00" * 32))
     monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip({"../escape": b"x"}))
     with pytest.raises(install.InstallError):
         install.install_engine()
@@ -406,8 +443,8 @@ def test_engine_dir_explains_when_no_release_is_reachable(home, monkeypatch):
 RUST_MANIFEST = {
     "version": "0.3.0",
     "artifacts": {
-        "engine-rust-osx-arm64": {"url": "https://releases.example/r.whl", "sha256": None},
-        "engine-rust-linux-x64": {"url": "https://releases.example/r.whl", "sha256": None},
+        "engine-rust-osx-arm64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
+        "engine-rust-linux-x64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
     },
 }
 

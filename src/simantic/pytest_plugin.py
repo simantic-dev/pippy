@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from ._locate import BinaryNotFound
-from .fixtures import ModelLibraryUnavailable, UnsupportedManifest, load_manifest
+from .fixtures import UnsupportedManifest, load_manifest
 from .mcu import ServerNotConfigured, SimError, render_uart, run as run_firmware
 from . import telemetry
 
@@ -130,7 +130,7 @@ class FirmwareItem(_ReportingItem):
     manifest's virtual seconds, then check the UART text and bus frames.
 
     Every manifest runs as a scenario through `Sim`, so `mcu:` names resolve
-    through your account (or a local model library, $SIMANTIC_MCU_LIB), overlay
+    through your account, overlay
     fragments with scripted peers are applied, and `media:` wires peers to the
     firmware's UARTs and CAN controllers.
     """
@@ -163,7 +163,7 @@ class FirmwareItem(_ReportingItem):
                         uart = render_uart(sim.uart_records(from_start=True), not manifest.single)
                         frames = render_frames(sim.frames(from_start=True), not manifest.single)
                         reached = sim.time
-            except (BinaryNotFound, ModelLibraryUnavailable, ServerNotConfigured) as exc:
+            except (BinaryNotFound, ServerNotConfigured) as exc:
                 pytest.skip(str(exc))
             except SimError as exc:
                 raise SimulationFailure(str(exc)) from None
