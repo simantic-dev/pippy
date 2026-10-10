@@ -15,14 +15,22 @@ Binaries land in ~/.simantic/bin, which the resolver searches. Nothing is
 written into site-packages: an installed package may be read-only, and a
 binary there would vanish on the next upgrade.
 
-Releases are public objects, keyed by version, so fetching needs no account;
-checksums from the manifest are what make a download trustworthy, so an
-artifact without one is refused.
+Releases are public objects, keyed by version, so fetching needs no account.
+Trust comes from two checks: the manifest is signed with a release key whose
+public half is below, and every artifact is verified against the checksum the
+manifest gives for it. A manifest that is unsigned, or an artifact without a
+checksum, is refused.
+
+What is fetched is the signed form of the manifest:
+
+    releases/<product>/<channel>.signed.json
+    {"manifest": "<the manifest text>", "signature": "<hex RSA signature>"}
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -59,6 +67,81 @@ def default_channel() -> str:
 
 class InstallError(RuntimeError):
     """The binary could not be fetched or verified."""
+
+
+#: Public halves of the keys allowed to sign a release manifest, as
+#: (modulus, exponent). More than one so a key can be rotated: a release signed
+#: with any of them is accepted.
+RELEASE_KEYS: tuple[tuple[int, int], ...] = (
+    (int(
+    "9e3afacf572c746e16f9aa8cf37402f9ee413377101c2cabb83c0f2dcd5089bf"
+    "a29c3b0f0e98ae067d934267cb6263e074e2027932caded10d615328d857cee2"
+    "d1356e09c1d59c64ec50124ef485370ac593eb524b062eec951e2b88b9e1d5ee"
+    "63444f2a8949da2c7a4d1d605c9193d25bd380f925afe09b4032513f0ec8d6ca"
+    "6a225c5333c3c64fb6bff897fbaa93c9c2d3fba85930c4cf5463eb17b2a388a6"
+    "6b2bb1a11e3c73b789475e7978f4e06ec6ead6f1aaa9b3a066c05d2d5a1584c2"
+    "0ae0ec4565d1bb44e7807022216f7a3c4a4f9722ab159c352ae744c81d60fe1a"
+    "26c8f0065d0e81537f66dc40d3cbf782dbe189a7119d16d6783d56670fbf965a"
+    "3df664a12e9651e8c2622aa561bca00bb3d634f777937c63864b5312b3cc4ef8"
+    "3d9d90b3d5e1387ac869022d1f26950c0549caf44c3bf3446902bc21957d66c4"
+    "133fccd89144bd92ee7f7d3892cfcc0c9a4723c74ab53e97f6aadbb02a6c34ab"
+    "ad948bb674f981068cadc464fa0ab0c01d32083cc4020defc6a8817058987d1a"
+    "993a1c1c0fd116ff9ad02bb32f2d4ab7e0532b72be11109ae965f72a71241f30"
+    "0d5725d01393f881d08a4c76587578b6afd193c0755009f1670f638195309fe0"
+    "e79f052f20f44e1c4dc0d35ac6470fc56d2abf30ad906582703ee8ccb4608f56"
+    "d8fa90727295e2ac396c6798249270552c1c70b7aa0c9e7bb7f7d1d27173e68b",
+        16,
+    ), 65537),
+)
+
+#: DER prefix of a SHA-256 DigestInfo (RFC 8017, section 9.2).
+_SHA256_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
+
+
+def _signed_by(message: bytes, signature: bytes, modulus: int, exponent: int) -> bool:
+    """RSASSA-PKCS1-v1_5 with SHA-256, the scheme `openssl dgst -sha256 -sign`
+    produces. Verification is one modular exponentiation and a comparison
+    against the only encoding that is valid, so it needs nothing beyond the
+    standard library."""
+    size = (modulus.bit_length() + 7) // 8
+    value = int.from_bytes(signature, "big")
+    if len(signature) != size or value >= modulus:
+        return False
+    digest = _SHA256_PREFIX + hashlib.sha256(message).digest()
+    expected = b"\x00\x01" + b"\xff" * (size - len(digest) - 3) + b"\x00" + digest
+    return hmac.compare_digest(pow(value, exponent, modulus).to_bytes(size, "big"), expected)
+
+
+def _verified_manifest(body: bytes) -> dict:
+    """The manifest inside a signed envelope, or InstallError if no release
+    key signed it."""
+    try:
+        envelope = json.loads(body)
+        text = envelope["manifest"]
+        signature = bytes.fromhex(envelope["signature"])
+        if not isinstance(text, str):
+            raise TypeError("manifest is not text")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise InstallError(f"release manifest is not a signed manifest: {exc}") from None
+    if not any(_signed_by(text.encode(), signature, n, e) for n, e in RELEASE_KEYS):
+        raise InstallError(
+            "release manifest signature is not valid. Refusing to install."
+        )
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise InstallError(f"release manifest is not valid JSON: {exc}") from None
+
+
+def _fetch_manifest(url: str, missing: str, timeout: float) -> dict:
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
+            body = response.read()
+    except urllib.error.HTTPError as exc:
+        raise InstallError(f"{missing} (HTTP {exc.code} from {url})") from None
+    except urllib.error.URLError as exc:
+        raise InstallError(f"cannot reach the release server: {exc.reason}") from None
+    return _verified_manifest(body)
 
 
 @dataclass(frozen=True)
@@ -119,19 +202,8 @@ def fetch_manifest(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     channel = channel or default_channel()
-    url = f"{releases_url()}/{product}/{channel}.json"
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        raise InstallError(
-            f"no published releases for {binary!r} (HTTP {exc.code} from {url}). "
-            "Install the binary yourself and point $SIMANTIC_* at it."
-        ) from None
-    except urllib.error.URLError as exc:
-        raise InstallError(f"cannot reach the release server: {exc.reason}") from None
-    except json.JSONDecodeError as exc:
-        raise InstallError(f"release manifest is not valid JSON: {exc}") from None
+    url = f"{releases_url()}/{product}/{channel}.signed.json"
+    return _fetch_manifest(url, f"no published releases for {binary!r}", timeout)
 
 
 def resolve(
@@ -350,16 +422,8 @@ def installed_rust_engine() -> Path | None:
 
 def fetch_rust_manifest(*, channel: str | None = None, timeout: float = 30) -> dict:
     channel = channel or default_channel()
-    url = f"{releases_url()}/{RUST_ENGINE_PRODUCT}/{channel}.json"
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        raise InstallError(f"no published Rust engine (HTTP {exc.code} from {url})") from None
-    except urllib.error.URLError as exc:
-        raise InstallError(f"cannot reach the release server: {exc.reason}") from None
-    except json.JSONDecodeError as exc:
-        raise InstallError(f"release manifest is not valid JSON: {exc}") from None
+    url = f"{releases_url()}/{RUST_ENGINE_PRODUCT}/{channel}.signed.json"
+    return _fetch_manifest(url, "no published Rust engine", timeout)
 
 
 def install_rust_engine(*, force: bool = False, channel: str | None = None) -> Path:
