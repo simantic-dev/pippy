@@ -28,7 +28,7 @@ from .engine import EngineNotFound, engine_dir, rust_engine_dir
 from .session import BACKENDS, ExpectTimeout, Match, Sim
 from ._rust import NotSupported, ScenarioRun, run_scenario
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     # firmware
