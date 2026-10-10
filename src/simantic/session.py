@@ -31,8 +31,7 @@ optionally with `parts=`, a list of peers on the board (one dict each:
 `{"name": "baro", "type": "i2c-device", "bus": "i2c1", "address": 0x76,
 "script": "baro.py"}`; types: uart-device, i2c-device, spi-device, can-node,
 sd-card (`image:` a formatted card image), peripheral) and, for what that list cannot express, an `overlay=`
-platform fragment. Scenario machines accept the same keys. (`$SIMANTIC_MCU_LIB`
-switches `mcu=` to a local model library for model development.)
+platform fragment. Scenario machines accept the same keys.
 
 `backend=` picks the engine, both hosted in-process: `"renode"` (the
 default; `Simantic.Core`, see `engine.py`) or `"rust"` (`simantic_rust`, the
@@ -53,7 +52,7 @@ from typing import Any
 
 from . import telemetry
 from .engine import _version_of, engine_dir as _engine_dir, load
-from .fixtures import MCU_LIB_ENV, _resolve_paths, platform_path
+from .fixtures import _resolve_paths
 from .mcu import SimError
 
 BACKENDS = ("renode", "rust")
@@ -530,18 +529,10 @@ class _RenodeBackend:
         return text or None
 
     def _add_machine(self, spec, name: str, mcu, fragment, elf, symbols_elf) -> None:
-        """Model name → the local model library when
-        $SIMANTIC_MCU_LIB is set (development), else the engine's own resolver
-        (~/.sim_cache, then the backend with stored credentials — like `sim --mcu`)."""
+        """Model name → the engine's own resolver (~/.sim_cache, then the
+        backend with stored credentials — like `sim --mcu`)."""
         elf_path = str(self._base / elf)
-        if os.environ.get(MCU_LIB_ENV):
-            frag_path = None
-            if fragment is not None:
-                frag_path = self._work / f"{name}.board"
-                frag_path.write_text(fragment)
-            sm = spec.AddMachine(name, str(platform_path(mcu, frag_path, self._work)), elf_path)
-        else:
-            sm = spec.AddModel(name, mcu, elf_path, fragment)
+        sm = spec.AddModel(name, mcu, elf_path, fragment)
         if symbols_elf:
             sm.SymbolsElfPath = str(self._base / symbols_elf)
 

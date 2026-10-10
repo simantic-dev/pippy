@@ -4,7 +4,6 @@ import pytest
 from pathlib import Path
 
 from simantic import (
-    ModelLibraryUnavailable,
     ServerNotConfigured,
     SimError,
     SimRun,
@@ -12,7 +11,6 @@ from simantic import (
     load_manifest,
     run_firmware,
 )
-from simantic.fixtures import MCU_LIB_ENV, mcu_lib_root
 
 SINGLE = """\
 mcu: AM6442_R5F
@@ -130,18 +128,6 @@ def test_manifest_without_an_mcu_is_refused(tmp_path):
         load_manifest(write(tmp_path, "elf: a.elf\n"))
 
 
-def test_unset_model_library_is_a_clear_error(monkeypatch):
-    monkeypatch.delenv(MCU_LIB_ENV, raising=False)
-    with pytest.raises(ModelLibraryUnavailable, match=MCU_LIB_ENV):
-        mcu_lib_root()
-
-
-def test_model_library_without_the_script_is_refused(tmp_path, monkeypatch):
-    monkeypatch.setenv(MCU_LIB_ENV, str(tmp_path))
-    with pytest.raises(ModelLibraryUnavailable, match="parse_replx"):
-        mcu_lib_root()
-
-
 def test_run_passes_when_every_expectation_holds():
     run = SimRun(output="RESULT: PASS\n", exit_code=0, missing=[], forbidden=[])
     assert run.passed
@@ -229,6 +215,5 @@ def test_model_name_cannot_escape_the_cache_dir(tmp_path, monkeypatch):
     from simantic import _replx
     from simantic.session import SimError
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv(_replx.MCU_LIB_ENV, raising=False)
     with pytest.raises(SimError, match="invalid model name"):
         _replx.model_replx("../../evil")
