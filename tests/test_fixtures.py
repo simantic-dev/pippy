@@ -223,3 +223,12 @@ def test_sim_binary_flags_make_a_manifest_unsupported(tmp_path):
         load_manifest(tmp_path / "test.yaml")
     (tmp_path / "test.yaml").write_text("mcu: X\nelf: fw.elf\nsim_args: ['--ascii']\n")
     assert load_manifest(tmp_path / "test.yaml").mcu == "X"
+
+
+def test_model_name_cannot_escape_the_cache_dir(tmp_path, monkeypatch):
+    from simantic import _replx
+    from simantic.session import SimError
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(_replx.MCU_LIB_ENV, raising=False)
+    with pytest.raises(SimError, match="invalid model name"):
+        _replx.model_replx("../../evil")

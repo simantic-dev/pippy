@@ -29,6 +29,24 @@ def test_credentials_are_not_world_readable(home):
     assert not mode & stat.S_IROTH
 
 
+def test_a_leftover_temp_file_does_not_leak_its_mode(home):
+    """O_CREAT only applies the mode to a new file; a pre-existing 0666 temp
+    file (or a symlink planted there) must not be inherited."""
+    leftover = home / ".sim_id.tmp"
+    leftover.write_text("stale")
+    leftover.chmod(0o666)
+    path = auth.save("smtc_abc", "dev@example.com")
+    assert not path.stat().st_mode & (stat.S_IRGRP | stat.S_IROTH)
+
+
+def test_save_does_not_follow_a_staging_symlink(home):
+    victim = home / "victim"
+    victim.write_text("keep")
+    (home / ".sim_id.tmp").symlink_to(victim)
+    auth.save("smtc_abc", "dev@example.com")
+    assert victim.read_text() == "keep"
+
+
 def test_save_leaves_no_temp_file_behind(home):
     auth.save("smtc_abc", "dev@example.com")
     assert [p.name for p in home.iterdir()] == [".sim_id"]

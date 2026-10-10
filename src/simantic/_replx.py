@@ -67,6 +67,8 @@ def model_replx(mcu: str, *, use_cache: bool = True) -> str:
     if os.environ.get(MCU_LIB_ENV):
         return platform_path(mcu, None, Path.cwd()).read_text()
     cached = cache_dir() / f"{mcu.lower()}.json"
+    if cached.resolve().parent != cache_dir().resolve():
+        raise SimError(f"invalid model name {mcu!r}")
     if use_cache and cached.exists():
         replx = json.loads(cached.read_text()).get("replx")
         if replx:

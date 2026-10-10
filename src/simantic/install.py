@@ -16,7 +16,8 @@ written into site-packages: an installed package may be read-only, and a
 binary there would vanish on the next upgrade.
 
 Releases are public objects, keyed by version, so fetching needs no account;
-checksums from the manifest are what make a download trustworthy.
+checksums from the manifest are what make a download trustworthy, so an
+artifact without one is refused.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ import json
 import os
 import shutil
 import platform
-import stat
 import tarfile
 import urllib.error
 import urllib.parse
@@ -65,7 +65,7 @@ class InstallError(RuntimeError):
 class Artifact:
     version: str
     url: str
-    sha256: str | None
+    sha256: str
 
 
 def simantic_home() -> Path:
@@ -119,9 +119,9 @@ def fetch_manifest(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     channel = channel or default_channel()
-    request = urllib.request.Request(f"{releases_url()}/{product}/{channel}.json")
+    url = f"{releases_url()}/{product}/{channel}.json"
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         raise InstallError(
@@ -154,7 +154,12 @@ def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
         raise InstallError(
             f"no {rid} build in {binary} release {version} (available: {available})"
         )
-    return Artifact(version=version, url=entry["url"], sha256=entry.get("sha256"))
+    sha256 = entry.get("sha256")
+    if not isinstance(sha256, str) or len(sha256.strip()) != 64:
+        raise InstallError(
+            f"{rid} build in {binary} release {version} has no sha256; refusing to install"
+        )
+    return Artifact(version=version, url=entry["url"], sha256=sha256.strip().lower())
 
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
@@ -168,13 +173,12 @@ def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     except urllib.error.URLError as exc:
         raise InstallError(f"download failed: {exc.reason}") from None
 
-    if artifact.sha256:
-        actual = hashlib.sha256(payload).hexdigest()
-        if actual.lower() != artifact.sha256.strip().lower():
-            raise InstallError(
-                f"checksum mismatch (expected {artifact.sha256}, got {actual}). "
-                "Refusing to install."
-            )
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual != artifact.sha256:
+        raise InstallError(
+            f"checksum mismatch (expected {artifact.sha256}, got {actual}). "
+            "Refusing to install."
+        )
     return payload
 
 
@@ -230,8 +234,12 @@ def install(binary: str, *, force: bool = False, channel: str | None = None) -> 
     # and a partial download can never be left looking like a usable binary.
     tmp = target.with_name(f".{binary}.incoming")
     try:
-        tmp.write_bytes(executable)
-        tmp.chmod(tmp.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # O_EXCL after an unlink: a planted symlink at the staging path would
+        # otherwise redirect the payload somewhere else before the rename.
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(executable)
         os.replace(tmp, target)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
@@ -264,10 +272,22 @@ def installed_engine() -> Path | None:
 
 
 def _version_key(name: str) -> tuple:
-    parts = []
-    for piece in name.replace("-", ".").split("."):
-        parts.append((0, int(piece)) if piece.isdigit() else (1, piece))
-    return tuple(parts)
+    """Numeric release order. Anything that is not `N.N.N[-pre]` sorts last,
+    so a stray directory under the engine root can never win the election."""
+    release, _, pre = name.partition("-")
+    pieces = release.split(".")
+    if not pieces or not all(p.isdigit() for p in pieces):
+        return (0,)
+    # A pre-release of X sorts below X itself.
+    return (1, tuple(int(p) for p in pieces), pre == "", pre)
+
+
+def _version_dir(root: Path, version: str) -> Path:
+    """`root/<version>`, refusing a version that is not a plain directory name."""
+    target = root / version
+    if target.resolve().parent != root.resolve() or version.startswith("."):
+        raise InstallError(f"release version {version!r} is not a valid directory name")
+    return target
 
 
 def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
@@ -278,7 +298,7 @@ def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
     `dotnet/`, laid out exactly as published.
     """
     artifact = resolve("sim", rid=f"{ENGINE_KEY}-{current_rid()}", channel=channel)
-    target = engine_root() / artifact.version
+    target = _version_dir(engine_root(), artifact.version)
     if (target / "Simantic.Core.dll").exists() and not force:
         return target
 
@@ -347,7 +367,7 @@ def install_rust_engine(*, force: bool = False, channel: str | None = None) -> P
     rust_engine_root()/<version>. A wheel is a zip; the module inside is abi3,
     so one wheel per platform serves every supported Python."""
     artifact = _resolve(fetch_rust_manifest(channel=channel), RUST_ENGINE_KEY, f"{RUST_ENGINE_KEY}-{current_rid()}")
-    target = rust_engine_root() / artifact.version
+    target = _version_dir(rust_engine_root(), artifact.version)
     if is_rust_engine(target) and not force:
         return target
     payload = download(artifact)
