@@ -74,9 +74,8 @@ Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                  # Renode en
 Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # our Rust engine
 ```
 
-The Rust engine is a small extension module, runs one machine, and is
-considerably faster. Anything it cannot do yet, such as multi machine scenarios
-or CAN and radio injection, raises `simantic.NotSupported` and names the gap
+The Rust engine is a small extension module, and is
+considerably faster. Anything it cannot do yet will raise a `simantic.NotSupported` and names the gap
 instead of quietly doing nothing. What each engine covers is listed in
 [the engine table](https://github.com/simantic-dev/pippy/blob/main/docs/session-api.md#what-each-engine-supports).
 
@@ -243,13 +242,6 @@ Each report also carries the version of this package, your Python version,
 operating system and CPU architecture. Reports go out when a pytest run or a
 `simantic` command finishes, never while a simulation is running, and a failed
 or slow request is dropped silently.
-
-We do not send file paths, project names, test names, call arguments, firmware,
-or simulation output. Those are yours. Turn it off whenever you like:
-
-```bash
-export SIMANTIC_TELEMETRY=0     # or DO_NOT_TRACK=1
-```
 
 ## Questions
 
