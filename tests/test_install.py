@@ -47,30 +47,30 @@ def zipped(name: str, body: bytes) -> bytes:
 
 
 def test_latest_is_the_default_channel(monkeypatch):
-    assert _requested_url(monkeypatch, {}) .endswith("/cli/latest.json")
+    assert _requested_url(monkeypatch, {}) .endswith("/cli/latest.signed.json")
 
 
 def test_channel_argument_selects_the_manifest(monkeypatch):
     url = _requested_url(monkeypatch, {}, channel="testing")
-    assert url.endswith("/cli/testing.json")
+    assert url.endswith("/cli/testing.signed.json")
 
 
 def test_environment_selects_the_channel(monkeypatch):
     """So a tester can opt in once instead of on every command."""
     assert _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}).endswith(
-        "/cli/testing.json"
+        "/cli/testing.signed.json"
     )
 
 
 def test_explicit_channel_beats_the_environment(monkeypatch):
     url = _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}, channel="latest")
-    assert url.endswith("/cli/latest.json")
+    assert url.endswith("/cli/latest.signed.json")
 
 
 def test_releases_host_can_be_redirected(monkeypatch):
     """Rehearse a release against staging before publishing it."""
     url = _requested_url(monkeypatch, {"SIMANTIC_RELEASES_URL": "http://localhost:8765/"})
-    assert url == "http://localhost:8765/cli/latest.json"
+    assert url == "http://localhost:8765/cli/latest.signed.json"
 
 
 def _requested_url(monkeypatch, env, *, binary="sim", **kwargs) -> str:
@@ -212,6 +212,95 @@ def _fake_urlopen(payload: bytes):
             return False
 
     return lambda *a, **k: Response()
+
+
+# --- manifest signatures ---
+
+# A throwaway key that signs nothing real: it exists so these tests can sign.
+TEST_N = int(
+    "c44280625993bbee6d52677b60a5fc32a0daeea4c763f462f0fe976bc993de4b"
+    "a6ec8f745e080f9be96da9f40e5e2ec1e33e9d4b261e1e37167cac37e02ce034"
+    "bd77e3ab2e2c3c2e404dce825f7cdfbdb9e87e465b0ac447c9f692604a180f5d"
+    "3a3acbc1bd733041794bd0c5018923897304133d4007cec8bee8ce0ad842ffc6"
+    "964c7cbbe75bc7a5aaacd5f25a0ff5d42f68ee1f6bfc03005241775e01c2ac7a"
+    "4aff1d471162f7977893146551405e3e91509427008f9f9353180a988ec0187e"
+    "77d068c90f7f11033881d02083dde711e98dbf96e143764f30e1369fa9bbc583"
+    "d7a28473d4d936d960129d8a36ce07fa191412da3afd46837b21fa453a6a9cbb",
+    16,
+)
+TEST_D = int(
+    "0d5753f0db93fe5773d9012dd2e115a6bf668288730169707c5f621db2a3399e"
+    "3ce7a1ccd0438e0414371f3176f4920b1e0e7894ce2f87f048b80ae0f57d3774"
+    "7e58b30244ee3edd0a040000becaf74ea75f958de4cc739149ba5832f176773c"
+    "e8236d0c6b7b74114f5487098d542c3540bb4b2f83b5c429c34882111ca85948"
+    "a1032ad83215e3c0d8b2d643e3b4633a2ce23110373eedd660837cf912c1f27e"
+    "14df96b37f0e1abe52b03f977872b457edf038d59e69913be342dcb06de65dac"
+    "5d7a3e6a2d572101cf9aec01a6fd42cae29e704d7ef6766f8cc4b3850dc30cba"
+    "5d526a2dc51644cd17a973e962ef05f8046362d29544b6ad5c427f487cd75041",
+    16,
+)
+
+
+def signed(manifest: dict | str, *, d: int = TEST_D, n: int = TEST_N) -> bytes:
+    """The envelope the release workflow publishes, signed with the test key."""
+    text = manifest if isinstance(manifest, str) else json.dumps(manifest)
+    size = (n.bit_length() + 7) // 8
+    digest = install._SHA256_PREFIX + hashlib.sha256(text.encode()).digest()
+    block = b"\x00\x01" + b"\xff" * (size - len(digest) - 3) + b"\x00" + digest
+    signature = pow(int.from_bytes(block, "big"), d, n).to_bytes(size, "big")
+    return json.dumps({"manifest": text, "signature": signature.hex()}).encode()
+
+
+@pytest.fixture
+def test_key(monkeypatch):
+    monkeypatch.setattr(install, "RELEASE_KEYS", ((TEST_N, 65537),))
+
+
+def test_a_signed_manifest_is_accepted(monkeypatch, test_key):
+    monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(signed(MANIFEST)))
+    assert install.fetch_manifest("sim") == MANIFEST
+
+
+def test_any_listed_key_may_sign(monkeypatch):
+    """Rotation: a release signed with the second key installs on a client
+    that still lists the first."""
+    monkeypatch.setattr(install, "RELEASE_KEYS", (install.RELEASE_KEYS[0], (TEST_N, 65537)))
+    assert install._verified_manifest(signed(MANIFEST)) == MANIFEST
+
+
+def test_a_manifest_signed_by_another_key_is_refused():
+    """The shipped keys do not include the test key."""
+    with pytest.raises(install.InstallError, match="signature is not valid"):
+        install._verified_manifest(signed(MANIFEST))
+
+
+def test_a_tampered_manifest_is_refused(test_key):
+    envelope = json.loads(signed(MANIFEST))
+    envelope["manifest"] = envelope["manifest"].replace("example.invalid", "evil.invalid")
+    with pytest.raises(install.InstallError, match="signature is not valid"):
+        install._verified_manifest(json.dumps(envelope).encode())
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        json.dumps(MANIFEST).encode(),  # the unsigned manifest, as published before
+        b'{"manifest": "{}", "signature": "zz"}',
+        b'{"manifest": "{}", "signature": ""}',
+        b'{"manifest": {}, "signature": "00"}',
+        b"not json",
+    ],
+)
+def test_an_unsigned_manifest_is_refused(body, test_key):
+    with pytest.raises(install.InstallError):
+        install._verified_manifest(body)
+
+
+def test_the_shipped_key_is_the_release_key():
+    """Guards the constant against a stray edit: SHA-256 of the modulus."""
+    (n, e), = install.RELEASE_KEYS
+    assert n.bit_length() == 4096 and e == 65537
+    assert hashlib.sha256(n.to_bytes(512, "big")).hexdigest() == "6957c5a276c268211db612c1916bd3ab133f28f0c60046c27391f6251261d5e9"
 
 
 # --- extraction ---
@@ -470,7 +559,7 @@ def test_rust_manifest_is_its_own_product(monkeypatch):
     monkeypatch.setattr(install.urllib.request, "urlopen", capture)
     with pytest.raises(install.InstallError):
         install.fetch_rust_manifest()
-    assert seen[0].endswith("/pyrite/latest.json")
+    assert seen[0].endswith("/pyrite/latest.signed.json")
 
 
 # -- engine layouts ----------------------------------------------------------
