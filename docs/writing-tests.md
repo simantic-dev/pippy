@@ -3,8 +3,9 @@
 You have firmware and a scenario with scripted peers (a GPS on a UART, an IMU on
 SPI, a barometer on I2C). This guide shows how to turn that into a pytest suite
 that asserts on what the peers saw and what the firmware did with it. The worked
-sample is [`examples/tests/test_peers.py`](../examples/tests/test_peers.py),
-which drives the peers in [`examples/peers/`](../examples/peers/). It is a
+sample is `tests/test_peers.py` (with `tests/test_peer_mocks.py`) in the
+[simantic-dev/examples](https://github.com/simantic-dev/examples) repo, which
+drives the peers in its `peers/` directory. It is a
 trimmed copy of a suite written for a flight controller: five tests here, eight
 in the original, one run of 12 virtual seconds (about 30 s of wall time there).
 
@@ -81,7 +82,7 @@ where each Python/engine hand-off costs a few hundred microseconds.
 
 ```
 pip install simantic pytest
-FIRMWARE=/path/to/firmware.elf pytest examples/tests
+FIRMWARE=/path/to/firmware.elf pytest tests   # from a simantic-dev/examples checkout
 ```
 
 If a test fails, read the peer's own log first: peers report with `ctx.info` /
