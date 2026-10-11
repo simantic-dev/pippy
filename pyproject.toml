@@ -43,3 +43,10 @@ dev = ["pytest>=8"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/simantic"]
+
+# Ship the examples in the wheel (under simantic/examples) and the sdist.
+[tool.hatch.build.targets.wheel.force-include]
+"examples" = "simantic/examples"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "examples", "docs", "tests", "README.md", "LICENSE", "pyproject.toml"]
