@@ -15,11 +15,14 @@
 #     every following poll in this phase; detect "never changes"
 # Version query (5A 04 01 5F) replies with a frame whose ID byte is wrong
 # (0xEE instead of 0x01), so a probe that checks the device identity must fail.
-# I2C limits: peers cannot yet NACK a data byte or stretch SCL mid-transfer,
-# so none of that is injected here.
+# Address NACK: on_address returns False for the first NACK_FIRST address
+# phases (the part is "not there yet"), then ACKs. This hook worked in sim 0.6.6
+# (see ../../README.md). Peers cannot yet NACK a data byte or stretch SCL
+# mid-transfer, so none of that is injected here.
 # A robust firmware checks header and checksum, range-checks distance and
 # strength, and flags a value that never changes.
 GOOD_CM = 1250
+NACK_FIRST = 3
 TEMP_RAW = (25 + 256) * 8
 
 
@@ -49,17 +52,24 @@ class Slave:
         self.ctx = ctx
         self.reply = b""
         self.triggers = 0
+        self.addr_phases = 0
 
     def on_write(self, data):
         data = bytes(data)
         if len(data) < 3 or data[0] != 0x5A:
             return
         if data[2] == 0x01:                       # version query: wrong ID byte
+            self.ctx.info("version query: replying with wrong ID 0xEE")
             body = bytes([0x5A, 0x07, 0xEE, 0x02, 0x03, 0x01])
             self.reply = body + bytes([cksum(body)])
         elif data[2] == 0x00:                     # trigger
             self.reply = phase_frame(self.triggers % 5)
+            self.ctx.info(f"trigger #{self.triggers}: fault phase {self.triggers % 5}")
             self.triggers += 1
+
+    def on_address(self, addr, is_read):
+        self.addr_phases += 1
+        return self.addr_phases > NACK_FIRST
 
     def on_read(self, count):
         return (self.reply + bytes(count))[:count]

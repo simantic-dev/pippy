@@ -28,6 +28,7 @@ class Slave:
         self.ctx = ctx
         self.beat, self.reg, self.read, self.out = 0, 0, False, b""
         self.accel_reads = 0
+        self.logged = set()
 
     def _value(self, reg):
         if reg == WHO_AM_I:
@@ -49,6 +50,9 @@ class Slave:
             self.read, self.reg = bool(b & 0x80), b & 0x7F
             if self.read:
                 self.out = self._value(self.reg)
+                if self.reg in (WHO_AM_I, FIFO_COUNTH) and self.reg not in self.logged:
+                    self.logged.add(self.reg)
+                    self.ctx.info(f"read reg 0x{self.reg:02x}: injecting fault")
             return 0x00
         if not self.read:
             return 0x00

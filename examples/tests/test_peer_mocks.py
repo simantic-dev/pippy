@@ -123,6 +123,19 @@ def test_gps_acks_valset_and_streams_pvt_at_programmed_rate():
     assert struct.unpack_from("<i", pvt, 6 + 24)[0] == round(-80.5449e7)
 
 
+def test_gps_rearms_stream_when_rate_arrives_after_pvt_enable():
+    p, ctx, _ = load("uart/good_gps.py", "Peer")
+
+    def valset(key, val, width=4):
+        body = bytes((0x06, 0x8A)) + (4 + 4 + width).to_bytes(2, "little") + bytes((0, 1, 0, 0)) + key.to_bytes(4, "little") + val.to_bytes(width, "little")
+        return b"\xb5\x62" + body + fletcher8(body)
+
+    for key, val in ((0x20910007, 1), (0x30210001, 200), (0x30210002, 1)):   # order the real driver uses
+        for b in valset(key, val, 1 if key == 0x20910007 else 2):
+            p.on_byte(b)
+    assert [t for t in ctx.timers if t[0] == "periodic"][-1] == ("periodic", 200_000)
+
+
 def test_gps_drops_a_bad_checksum_without_acking():
     p, ctx, _ = load("uart/good_gps.py", "Peer")
     for b in b"\xb5\x62\x06\x8a\x00\x00\x00\x00":
@@ -198,6 +211,17 @@ def test_ina228_known_answers_follow_the_firmware_config():
     assert read_reg(s, 0x08, 3) == round(16.8 * 12.0 / (3.2 * lsb)).to_bytes(3, "big")   # Eq. 5
 
 
+def test_ina228_energy_and_charge_accumulate():
+    s, ctx, _ = load("i2c/good_ina228.py", "Slave")
+    s.on_write(bytes([0x01, 0xFB, 0x68]))
+    s.on_finish()
+    ctx.now_us = 3156 * 10                                # ten conversion cycles = 31.56 ms
+    lsb = 0x1000 / (13107.2e6 * 0.0005)
+    t = 0.03156
+    assert int.from_bytes(read_reg(s, 0x0A, 5), "big") == int(12.0 * t / lsb)                # Eq. 7
+    assert int.from_bytes(read_reg(s, 0x09, 5), "big") == int(16.8 * 12.0 * t / (16 * 3.2 * lsb))   # Eq. 6
+
+
 def test_icp20100_pressure_pair_known_answer():
     s, ctx, _ = load("i2c/good_icp20100.py", "Slave")
     assert read_reg(s, 0xD3, 1) == b"\xb2"
@@ -227,6 +251,7 @@ def test_tf02_malicious_phases():
     assert out[2][:2] == b"\x59\x58"                                 # bad header
     assert out[3][2:6] == b"\xff\xff\x00\x00"                        # out of range, no strength
     assert out[4] == out[0]                                          # stuck: same value again
+    assert [s.on_address(0x10, False) for _ in range(5)] == [False, False, False, True, True]   # first 3 address phases NACKed
     s.on_write(bytes((0x5A, 0x04, 0x01, 0x5F)))
     assert s.on_read(7)[2] == 0xEE                                   # wrong ID byte (a good part says 0x01)
 

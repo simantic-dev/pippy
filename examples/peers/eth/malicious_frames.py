@@ -11,9 +11,10 @@
 #   7 valid                         -> must be delivered (the stack recovered)
 # Expected: markers 1 and 7 reach the application, 2-6 do not, and the
 # firmware does not hang, leak buffers or crash on the bad ones.
-# Frame 2 uses ctx.send_wire (we supply the FCS), which the pyrite engine's
-# scripted peer has; the C# peer's ctx has no send_wire, so there frame 2 is
-# skipped with a warning.
+# Frame 2 uses ctx.send_wire (we supply the FCS). sim 0.6.6's ctx has no
+# send_wire (observed: "'_Ctx' object has no attribute 'send_wire'"), so there
+# frame 2 is skipped with a warning and the run continues; an engine whose ctx
+# has send_wire (the pyrite engine's peer documents it) sends it.
 # Spec: IEEE 802.3 (FCS = CRC-32, sent least-significant byte first), RFC 791,
 # RFC 768.
 import struct

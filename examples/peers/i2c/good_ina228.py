@@ -8,7 +8,8 @@
 # the enabled inputs' conversion times x averaging, from ADC_CONFIG; CURRENT
 # and POWER scale from the SHUNT_CAL it writes (CURRENT_LSB, Eq. 2). Results
 # read 0 until the first cycle completes; reading DIAG_ALRT clears CNVRF.
-# ENERGY/CHARGE accumulators are modelled for time since conversions started.
+# ENERGY/CHARGE (40 bit, Eq. 6-7) accumulate from the last ADC_CONFIG write;
+# RSTACC is not modelled.
 PACK_V = 16.8      # V, bus voltage
 LOAD_A = 12.0      # A, current through the shunt
 DIE_C = 35.0       # degC
@@ -18,7 +19,7 @@ CT_US = (50, 84, 150, 280, 540, 1052, 2074, 4120)  # per VBUSCT/VSHCT/VTCT code:
 AVG_N = (1, 4, 16, 64, 128, 256, 512, 1024)        # per AVG code: Table 7-6
 CONVDLY_STEP_US = 2000                             # CONFIG.CONVDLY step: Table 7-5
 
-CONFIG, ADC_CONFIG, SHUNT_CAL, VBUS, DIETEMP, CURRENT, POWER, DIAG_ALRT = 0, 1, 2, 5, 6, 7, 8, 11
+CONFIG, ADC_CONFIG, SHUNT_CAL, VBUS, DIETEMP, CURRENT, POWER, ENERGY, CHARGE, DIAG_ALRT = 0, 1, 2, 5, 6, 7, 8, 9, 10, 11
 RESET = {CONFIG: 0x0000, ADC_CONFIG: 0xFB68, SHUNT_CAL: 0x1000}  # SLYS021A 7.6.1.1-3
 
 
@@ -64,16 +65,21 @@ class Slave:
         if reg in RESET:
             return be(self.regs[reg], 2)
         lsb = self._current_lsb()
-        if n == 0 or (reg in (CURRENT, POWER) and lsb == 0):
-            return bytes(2 if reg == DIETEMP else 3)
+        if n == 0 or (reg in (CURRENT, POWER, ENERGY, CHARGE) and lsb == 0):
+            return bytes({DIETEMP: 2, ENERGY: 5, CHARGE: 5}.get(reg, 3))
+        t_s = n * self._cycle_us() * 1e-6   # time since conversions started
         if reg == VBUS:
-            return be(int(PACK_V / 195.3125e-6) << 4, 3)   # 195.3125 uV/LSB, 20 bit left-aligned
+            return be(round(PACK_V / 195.3125e-6) << 4, 3)   # 195.3125 uV/LSB, 20 bit left-aligned
         if reg == DIETEMP:
             return be(int(DIE_C / 7.8125e-3), 2)           # 7.8125 mdegC/LSB
         if reg == CURRENT:
-            return be(int(LOAD_A / lsb) << 4, 3)           # Eq. 4
+            return be(round(LOAD_A / lsb) << 4, 3)           # Eq. 4
         if reg == POWER:
             return be(PACK_V * LOAD_A / (3.2 * lsb), 3)    # Eq. 5
+        if reg == ENERGY:
+            return be(PACK_V * LOAD_A * t_s / (16 * 3.2 * lsb), 5)   # Eq. 6, 40 bit
+        if reg == CHARGE:
+            return be(LOAD_A * t_s / lsb, 5)                          # Eq. 7, 40 bit
         return bytes(2)
 
     def on_write(self, data):
