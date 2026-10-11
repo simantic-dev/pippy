@@ -61,7 +61,7 @@ def run():
 ```python
 def test_gps_fix_reaches_mavlink(run):
     msgs, _ = run
-    assert last(msgs, GPS_RAW_INT)[28] >= 3        # gps_peer reports a 3D fix
+    assert last(msgs, GPS_RAW_INT)[28] >= 3        # good_gps reports a 3D fix
 
 def test_baro_is_read_over_i2c(run):
     _, bus = run

@@ -44,7 +44,8 @@ class Peer:
         self.ctx, self.rx = ctx, bytearray()
         self.itow_ms = 0
         self.rate_meas = self.rate_nav = None
-        self.pvt_on = self.streaming = False
+        self.pvt_on = False
+        self.period_us = None
 
     def on_byte(self, b):
         self.rx.append(b)
@@ -80,13 +81,16 @@ class Peer:
             self._maybe_stream()
 
     def _maybe_stream(self):
-        if self.streaming or not self.pvt_on:
-            return
-        self.streaming = True
+        # The firmware enables NAV-PVT before it programs the rate (observed
+        # on a real driver), so re-arm the timer whenever the period changes.
         meas = self.rate_meas or DEFAULT_RATE_MEAS_MS
         nav = self.rate_nav or DEFAULT_RATE_NAV
+        period = meas * nav * 1000
+        if not self.pvt_on or period == self.period_us:
+            return
+        self.period_us = period
         self.ctx.info(f"NAV-PVT every {meas * nav} ms (as programmed by the firmware)")
-        self.ctx.schedule_periodic(meas * nav * 1000)
+        self.ctx.schedule_periodic(period)
 
     def on_timer(self):
         self.itow_ms += self.rate_meas or DEFAULT_RATE_MEAS_MS
