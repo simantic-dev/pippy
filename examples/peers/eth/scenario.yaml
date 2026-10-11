@@ -1,0 +1,18 @@
+# Ethernet: the good and the malicious peer on the same wiring, as two machines running
+# YOUR firmware (not shipped). Run from this directory:
+#   sim --scenario scenario.yaml --timeout 12
+# Change mcu, bus, pins and baud to match your firmware.
+machines:
+  good:
+    mcu: STM32H753IITX
+    elf: firmware.elf
+    parts:
+      - { name: host, type: eth-peer, mac: "02:00:00:00:00:99", script: good_arp_udp.py }
+  malicious:
+    mcu: STM32H753IITX
+    elf: firmware.elf
+    parts:
+      - { name: host, type: eth-peer, mac: "02:00:00:00:00:99", script: malicious_frames.py }
+media:
+  - { type: eth, connect: [good.ethernet, good.host] }
+  - { type: eth, connect: [malicious.ethernet, malicious.host] }

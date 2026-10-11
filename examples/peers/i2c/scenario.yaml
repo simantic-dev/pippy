@@ -1,0 +1,15 @@
+# I2C: the good and the malicious peer on the same wiring, as two machines running
+# YOUR firmware (not shipped). Run from this directory:
+#   sim --scenario scenario.yaml --timeout 12
+# Change mcu, bus, pins and baud to match your firmware.
+machines:
+  good:
+    mcu: STM32H753IITX
+    elf: firmware.elf
+    parts:
+      - { name: pwr, type: i2c-device, bus: i2c1, address: 0x45, script: good_ina228.py }
+  malicious:
+    mcu: STM32H753IITX
+    elf: firmware.elf
+    parts:
+      - { name: lidar, type: i2c-device, bus: i2c3, address: 0x10, script: malicious_tf02.py }

@@ -65,14 +65,14 @@ def test_mavlink_stream_has_the_expected_messages(run):
 
 def test_gps_fix_reaches_mavlink(run):
     msgs, _ = run
-    assert last(msgs, GPS_RAW_INT)[28] >= 3  # fix_type: gps_peer reports a 3D fix
+    assert last(msgs, GPS_RAW_INT)[28] >= 3  # fix_type: good_gps reports a 3D fix
 
 
 def test_imu_is_polled_and_attitude_follows(run):
     msgs, bus = run
     assert bus["imu"] > 100
     pitch_deg = struct.unpack_from("<f", last(msgs, ATTITUDE), 8)[0] * 57.2958
-    assert -13 < pitch_deg < -7  # icm42688_peer PITCH_TRIM_DEG = 10, firmware sign convention
+    assert -13 < pitch_deg < -7  # spi/good_icm42688 PITCH_TRIM_DEG = 10, firmware sign convention
 
 
 def test_baro_is_read_over_i2c(run):
