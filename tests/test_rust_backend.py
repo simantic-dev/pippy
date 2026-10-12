@@ -426,3 +426,15 @@ def test_a_one_shot_scenario_returns_its_traces(fake_engine, monkeypatch, tmp_pa
     assert run.output.startswith("[nodea] RESULT: PASS")
     with pytest.raises(SimError, match="no symbol"):
         run_scenario(scenario, 1, base=tmp_path, trace_symbols=["no_such_function"])
+
+
+def test_gdb_port_is_refused_not_silently_dropped(fake_engine, monkeypatch, tmp_path):
+    from simantic._rust import run_scenario
+
+    mcu, elf = fake_engine
+    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario([]), raising=False)
+    machine = {"mcu": mcu, "elf": str(elf), "gdbPort": 3333}
+    with pytest.raises(NotSupported, match="gdbPort"):
+        run_scenario({"machines": {"dut": machine}}, 1, base=tmp_path)
+    with pytest.raises(NotSupported, match="gdbPort"):
+        Sim(scenario={"machines": {"dut": machine}}, backend="rust")

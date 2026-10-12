@@ -79,6 +79,8 @@ def run_scenario(scenario: dict, timeout: float, *, base: str | os.PathLike[str]
     for name, m in scenario["machines"].items():
         if m.get("parts"):
             raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
+        if m.get("gdbPort"):
+            raise NotSupported("backend='rust' does not serve gdbPort through simantic; use `sim --scenario` with gdbPort, or backend='renode'")
         overlay = base / m["overlay"] if m.get("overlay") else None
         if overlay:
             declared |= {f"machine '{name}': {entry}" for entry in re.findall(r"^(\w+)\s*:", overlay.read_text(), re.M)}
@@ -166,6 +168,8 @@ class RustBackend:
         m = machines[0]
         if m.get("parts"):
             raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
+        if m.get("gdbPort"):
+            raise NotSupported("backend='rust' does not serve gdbPort through simantic; use `sim --scenario` with gdbPort, or backend='renode'")
         self.machines = [m["name"]]
         self._elf = (base / m["elf"]).read_bytes()
         # Symbols come from the side ELF when the image that boots is stripped.
