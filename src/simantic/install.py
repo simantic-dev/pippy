@@ -15,7 +15,9 @@ Binaries land in ~/.simantic/bin, which the resolver searches. Nothing is
 written into site-packages: an installed package may be read-only, and a
 binary there would vanish on the next upgrade.
 
-Releases are public objects, keyed by version, so fetching needs no account.
+The releases bucket is private. Every read goes through the `get-release` edge
+function: the object path is traded, with the stored personal access token
+(`simantic auth`), for a 300 s signed URL, and that is what is downloaded.
 Trust comes from two checks: the manifest is signed with a release key whose
 public half is below, and every artifact is verified against the checksum the
 manifest gives for it. A manifest that is unsigned, or an artifact without a
@@ -44,8 +46,68 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import auth
+
 
 RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases"
+
+
+_PUBLIC_PREFIX = "/storage/v1/object/public/releases/"
+
+
+def object_path(url: str) -> str:
+    """The bucket object path behind a manifest `/public/` URL, host-checked
+    so a manifest cannot make us send the token's signing request elsewhere."""
+    parts = urllib.parse.urlsplit(url)
+    if (
+        parts.scheme != "https"
+        or parts.netloc != urllib.parse.urlsplit(RELEASES_URL).netloc
+        or not parts.path.startswith(_PUBLIC_PREFIX)
+    ):
+        raise InstallError(f"refusing release URL outside the releases bucket: {url}")
+    return urllib.parse.unquote(parts.path[len(_PUBLIC_PREFIX):])
+
+
+def signed_url(path: str, *, timeout: float = 30) -> str:
+    """Trade the stored token for a signed URL to `path` via get-release."""
+    credentials = auth.load()  # NotAuthenticated says to run `simantic auth`
+    origin = RELEASES_URL.split("/storage/", 1)[0]
+    request = urllib.request.Request(
+        f"{origin}/functions/v1/get-release?path={urllib.parse.quote(path)}",
+        headers={"Authorization": f"Bearer {credentials.api_key}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            url = json.loads(response.read()).get("url")
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.loads(exc.read()).get("error", "")
+        except (ValueError, AttributeError, OSError):
+            message = ""
+        if exc.code == 401:
+            raise InstallError(
+                "release server rejected your token; run `simantic auth` to log in again"
+            ) from None
+        if exc.code == 403:
+            raise InstallError(f"release access denied: {message or 'account not approved'}") from None
+        if exc.code == 404:
+            raise InstallError(f"no release object at {path!r}") from None
+        raise InstallError(f"release signing failed (HTTP {exc.code})") from None
+    except urllib.error.URLError as exc:
+        raise InstallError(f"cannot reach the release server: {exc.reason}") from None
+    except ValueError as exc:
+        raise InstallError(f"release server returned invalid JSON: {exc}") from None
+    if not isinstance(url, str) or not url:
+        raise InstallError("release server returned no signed URL")
+    return url
+
+
+def _release_url(url: str) -> str:
+    """The URL to actually fetch. $SIMANTIC_RELEASES_URL (staging, a local
+    directory) is read directly; the real bucket is read via a signed URL."""
+    if "SIMANTIC_RELEASES_URL" in os.environ:
+        return url
+    return signed_url(object_path(url))
 
 
 def releases_url() -> str:
@@ -135,7 +197,7 @@ def _verified_manifest(body: bytes) -> dict:
 
 def _fetch_manifest(url: str, missing: str, timeout: float) -> dict:
     try:
-        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as response:
+        with urllib.request.urlopen(urllib.request.Request(_release_url(url)), timeout=timeout) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
         raise InstallError(f"{missing} (HTTP {exc.code} from {url})") from None
@@ -236,7 +298,7 @@ def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
-    request = urllib.request.Request(artifact.url)
+    request = urllib.request.Request(_release_url(artifact.url))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()

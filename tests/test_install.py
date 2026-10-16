@@ -11,6 +11,9 @@ import pytest
 from simantic import auth, install
 from simantic._locate import BinaryNotFound, locate
 
+REAL_RELEASE_URL = install._release_url
+PUBLIC = install.RELEASES_URL + "/cli/0.4.0/osx-arm64/sim.zip"
+
 MANIFEST = {
     "version": "0.4.0",
     "artifacts": {
@@ -26,6 +29,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
     # Fetching requires an account, so the common case here is authenticated.
     auth.save("smtc_" + "a" * 32, "dev@example.com")
+    monkeypatch.setattr(install, "_release_url", lambda url: url)
     # Most of this file is about what happens to a URL once it is known —
     # channels, products, checksums, placement. The gate that decides *which*
     # URL is exercised in "the release gate" below, and turned off here so
@@ -41,6 +45,68 @@ def zipped(name: str, body: bytes) -> bytes:
 
 
 # --- the account gate ---
+
+
+def _http_error(code, body=b""):
+    return install.urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
+
+
+def test_object_path_strips_public_prefix():
+    assert install.object_path(PUBLIC) == "cli/0.4.0/osx-arm64/sim.zip"
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.example/storage/v1/object/public/releases/cli/latest.json",
+    "http://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases/x",
+    install.RELEASES_URL.replace("/public/", "/sign/") + "/x",
+])
+def test_object_path_refuses_foreign_urls(url):
+    with pytest.raises(install.InstallError):
+        install.object_path(url)
+
+
+def test_release_url_signs_with_the_stored_token(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    seen = []
+
+    def urlopen(request, **k):
+        seen.append(request)
+        return io.BytesIO(b'{"url": "https://signed.example/o?t=1", "expires_in": 300}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    assert REAL_RELEASE_URL(PUBLIC) == "https://signed.example/o?t=1"
+    assert seen[0].full_url.endswith(
+        "/functions/v1/get-release?path=cli/0.4.0/osx-arm64/sim.zip")
+    assert seen[0].get_header("Authorization") == "Bearer smtc_" + "a" * 32
+
+
+def test_403_shows_the_server_message(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+
+    def urlopen(request, **k):
+        raise _http_error(403, b'{"error": "account not approved yet"}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    with pytest.raises(install.InstallError, match="account not approved yet"):
+        REAL_RELEASE_URL(PUBLIC)
+
+
+def test_401_says_to_log_in(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+
+    def urlopen(request, **k):
+        raise _http_error(401, b'{"error": "bad"}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    with pytest.raises(install.InstallError, match="simantic auth"):
+        REAL_RELEASE_URL(PUBLIC)
+
+
+def test_no_token_says_how_to_log_in(monkeypatch, home):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    (home / ".sim_id").unlink()
+    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
+        REAL_RELEASE_URL(PUBLIC)
 
 
 # --- release channels ---
