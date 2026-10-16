@@ -243,7 +243,7 @@ def current_rid() -> str:
 
 #: Binary name -> release product prefix.
 PRODUCTS = {
-    "sim": "cli",
+    "sim": "pyrite",
 }
 
 
@@ -375,9 +375,6 @@ def install(binary: str, *, force: bool = False, channel: str | None = None) -> 
 
 # -- the engine: Simantic.Core + a private .NET runtime, for in-process use ----
 
-ENGINE_KEY = "engine"
-
-
 def engine_root() -> Path:
     """Where engine releases live: ~/.simantic/engine/<version>/."""
     return simantic_home() / "engine"
@@ -413,25 +410,6 @@ def _version_dir(root: Path, version: str) -> Path:
     target = root / version
     if target.resolve().parent != root.resolve() or version.startswith("."):
         raise InstallError(f"release version {version!r} is not a valid directory name")
-    return target
-
-
-def install_engine(*, force: bool = False, channel: str | None = None) -> Path:
-    """Download the engine for this machine into engine_root()/<version>.
-
-    One zip from the `sim` release manifest, key `engine-<rid>`: the
-    Simantic.Core publish directory plus a private .NET runtime under
-    `dotnet/`, laid out exactly as published.
-    """
-    artifact = resolve("sim", rid=f"{ENGINE_KEY}-{current_rid()}", channel=channel)
-    target = _version_dir(engine_root(), artifact.version)
-    if (target / "Simantic.Core.dll").exists() and not force:
-        return target
-
-    payload = download(artifact)
-    if not payload.startswith(b"PK\x03\x04"):
-        raise InstallError("engine artifact is not a zip archive")
-    _unpack_zip(payload, target)
     return target
 
 

@@ -206,7 +206,7 @@ expect_frames_absent: ["CAN Dropped"]
 Single-machine manifests (`mcu:` at the top level) are the one-machine case.
 Models resolve through your account; no checkout of ours is needed. A model can
 require a minimum engine version; if yours is older, the failure names the
-version and the fix (`simantic install engine --force`).
+version and the fix (use a newer engine build).
 
 Three more keys cover fixtures that need files or peers on the host side:
 `sparse_files` creates blank files of a given size before the run (a blank SD
