@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import _elf, _replx
+from . import _elf
 from .engine import load_rust
 from .mcu import SimError
 
@@ -56,6 +56,11 @@ class ScenarioRun:
         return render_uart(self.uart_records, multi=True)
 
 
+def _arm(elf: bytes) -> bool:
+    """Whether the ELF's `e_machine` is ARM (r0-r3 arguments) rather than RISC-V (a0-a3)."""
+    return int.from_bytes(elf[18:20], "little") == 40
+
+
 def run_scenario(scenario: dict, timeout: float, *, base: str | os.PathLike[str] | None = None, engine_dir=None,
                  trace_symbols: list[str] = (), trace_memory: list[str] = (),
                  trace_interrupts: bool = False) -> ScenarioRun:
@@ -81,14 +86,13 @@ def run_scenario(scenario: dict, timeout: float, *, base: str | os.PathLike[str]
             raise NotSupported("backend='rust' cannot build parts= yet; use backend='renode'")
         if m.get("gdbPort"):
             raise NotSupported("backend='rust' does not serve gdbPort through simantic; use `sim --scenario` with gdbPort, or backend='renode'")
-        overlay = base / m["overlay"] if m.get("overlay") else None
-        if overlay:
-            declared |= {f"machine '{name}': {entry}" for entry in re.findall(r"^(\w+)\s*:", overlay.read_text(), re.M)}
-        machines.append((name, _replx.platform_text(mcu=m["mcu"], overlay=overlay), (base / m["elf"]).read_bytes()))
+        board = (base / m["overlay"]).read_text() if m.get("overlay") else ""
+        declared |= {f"machine '{name}': {entry}" for entry in re.findall(r"^(\w+)\s*:", board, re.M)}
+        machines.append((name, m["mcu"], board, (base / m["elf"]).read_bytes()))
     # Per machine: its symbols, and whether its registers are r0-r3 or a0-a3.
     symbols = {name: _elf.symbols((base / (m.get("symbolsElfPath") or m["elf"])).read_bytes())
                for name, m in scenario["machines"].items()} if trace_symbols or trace_memory else {}
-    cortex_m = {name: "CPU.CortexM" in text for name, text, _elf_bytes in machines}
+    cortex_m = {name: _arm(elf) for name, _mcu, _board, elf in machines}
 
     def resolve(where: str) -> list[tuple[str, int]]:
         if where[:2].lower() == "0x":
@@ -174,8 +178,7 @@ class RustBackend:
         self._elf = (base / m["elf"]).read_bytes()
         # Symbols come from the side ELF when the image that boots is stripped.
         self._symbols_elf = (base / m["symbolsElfPath"]).read_bytes() if m.get("symbolsElfPath") else self._elf
-        overlay = base / m["overlay"] if m.get("overlay") else None
-        text = _replx.platform_text(mcu=m["mcu"], overlay=overlay)
+        board = (base / m["overlay"]).read_text() if m.get("overlay") else ""
         engine = load_rust(engine_dir)
         # Only what was asked for is passed, so an engine that predates an
         # option still runs every script that does not use it.
@@ -185,21 +188,21 @@ class RustBackend:
         if itm:
             options["itm"] = True
         try:
-            self._s = engine.Session(text, self._elf, **options)
+            self._s = engine.Session(m["mcu"], self._elf, board=board, **options)
         except TypeError as exc:
             raise NotSupported(f"{'/'.join(options)} {_NEWER_ENGINE}") from exc
         except Exception as exc:
             raise SimError(str(exc)) from exc
         # An older engine does not report what it left out.
         skipped = getattr(self._s, "skipped", list)()
-        declared = set(re.findall(r"^(\w+)\s*:", overlay.read_text(), re.M)) if overlay else set()
+        declared = set(re.findall(r"^(\w+)\s*:", board, re.M))
         lost = [s for s in skipped if s.split(" ")[0] in declared]
         if lost:
             raise NotSupported(f"backend='rust' has no model for {', '.join(lost)}; use backend='renode'")
         self._symbols: dict[str, int] | None = None
         self._trace_interrupts, self._interrupts_seen = trace_interrupts, 0
         self._itm = itm
-        self._cortex_m = "CPU.CortexM" in text
+        self._cortex_m = _arm(self._elf)
         self._names: dict[int, str] | None = None
         self._records: dict[str, list[dict]] = {k: [] for k in (
             "uart", "frames", "logs", "interrupts", "symbol_trace", "memory_trace", "itm")}
