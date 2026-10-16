@@ -12,13 +12,13 @@ from simantic import auth, install
 from simantic._locate import BinaryNotFound, locate
 
 REAL_RELEASE_URL = install._release_url
-PUBLIC = install.RELEASES_URL + "/cli/0.4.0/osx-arm64/sim.zip"
+PATH = "cli/0.4.0/osx-arm64/sim.zip"
 
 MANIFEST = {
     "version": "0.4.0",
     "artifacts": {
-        "osx-arm64": {"url": "https://example.invalid/sim.zip", "sha256": "ab" * 32},
-        "linux-x64": {"url": "https://example.invalid/sim-linux.zip"},
+        "osx-arm64": {"path": "cli/0.4.0/osx-arm64/sim.zip", "sha256": "ab" * 32},
+        "linux-x64": {"path": "cli/0.4.0/linux-x64/sim.zip"},
     },
 }
 
@@ -29,7 +29,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
     # Fetching requires an account, so the common case here is authenticated.
     auth.save("smtc_" + "a" * 32, "dev@example.com")
-    monkeypatch.setattr(install, "_release_url", lambda url: url)
+    monkeypatch.setattr(install, "_release_url", lambda path: "https://releases.invalid/" + path)
     # Most of this file is about what happens to a URL once it is known —
     # channels, products, checksums, placement. The gate that decides *which*
     # URL is exercised in "the release gate" below, and turned off here so
@@ -51,18 +51,22 @@ def _http_error(code, body=b""):
     return install.urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
 
 
-def test_object_path_strips_public_prefix():
-    assert install.object_path(PUBLIC) == "cli/0.4.0/osx-arm64/sim.zip"
-
-
-@pytest.mark.parametrize("url", [
-    "https://evil.example/storage/v1/object/public/releases/cli/latest.json",
-    "http://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases/x",
-    install.RELEASES_URL.replace("/public/", "/sign/") + "/x",
+@pytest.mark.parametrize("path", [
+    "", None, "../cli/x", "cli/../x", "/cli/x", "https://evil.example/x", "a\\b",
 ])
-def test_object_path_refuses_foreign_urls(url):
+def test_invalid_paths_are_rejected(path):
     with pytest.raises(install.InstallError):
-        install.object_path(url)
+        install.checked_path(path)
+    with pytest.raises(install.InstallError):
+        install._resolve({"version": "1", "artifacts": {"r": {"path": path, "sha256": "0" * 64}}}, "sim", "r")
+
+
+def test_signed_url_must_be_https(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    monkeypatch.setattr(install.urllib.request, "urlopen",
+                        lambda r, **k: io.BytesIO(b'{"url": "http://signed.example/o"}'))
+    with pytest.raises(install.InstallError, match="https"):
+        REAL_RELEASE_URL(PATH)
 
 
 def test_release_url_signs_with_the_stored_token(monkeypatch):
@@ -74,7 +78,7 @@ def test_release_url_signs_with_the_stored_token(monkeypatch):
         return io.BytesIO(b'{"url": "https://signed.example/o?t=1", "expires_in": 300}')
 
     monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
-    assert REAL_RELEASE_URL(PUBLIC) == "https://signed.example/o?t=1"
+    assert REAL_RELEASE_URL(PATH) == "https://signed.example/o?t=1"
     assert seen[0].full_url.endswith(
         "/functions/v1/get-release?path=cli/0.4.0/osx-arm64/sim.zip")
     assert seen[0].get_header("Authorization") == "Bearer smtc_" + "a" * 32
@@ -88,7 +92,7 @@ def test_403_shows_the_server_message(monkeypatch):
 
     monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
     with pytest.raises(install.InstallError, match="account not approved yet"):
-        REAL_RELEASE_URL(PUBLIC)
+        REAL_RELEASE_URL(PATH)
 
 
 def test_401_says_to_log_in(monkeypatch):
@@ -99,14 +103,14 @@ def test_401_says_to_log_in(monkeypatch):
 
     monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
     with pytest.raises(install.InstallError, match="simantic auth"):
-        REAL_RELEASE_URL(PUBLIC)
+        REAL_RELEASE_URL(PATH)
 
 
 def test_no_token_says_how_to_log_in(monkeypatch, home):
     monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
     (home / ".sim_id").unlink()
     with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
-        REAL_RELEASE_URL(PUBLIC)
+        REAL_RELEASE_URL(PATH)
 
 
 # --- release channels ---
@@ -135,6 +139,7 @@ def test_explicit_channel_beats_the_environment(monkeypatch):
 
 def test_releases_host_can_be_redirected(monkeypatch):
     """Rehearse a release against staging before publishing it."""
+    monkeypatch.setattr(install, "_release_url", REAL_RELEASE_URL)
     url = _requested_url(monkeypatch, {"SIMANTIC_RELEASES_URL": "http://localhost:8765/"})
     assert url == "http://localhost:8765/cli/latest.signed.json"
 
@@ -224,7 +229,7 @@ def test_checksum_mismatch_refuses_the_binary(monkeypatch):
     monkeypatch.setattr(
         install.urllib.request, "urlopen", _fake_urlopen(b"tampered")
     )
-    artifact = install.Artifact("0.4.0", "https://example.invalid/x", "00" * 32)
+    artifact = install.Artifact("0.4.0", "cli/x", "00" * 32)
     with pytest.raises(install.InstallError, match="checksum mismatch"):
         install.download(artifact)
 
@@ -233,7 +238,7 @@ def test_matching_checksum_is_accepted(monkeypatch):
     payload = b"genuine"
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(payload))
     artifact = install.Artifact(
-        "0.4.0", "https://example.invalid/x", hashlib.sha256(payload).hexdigest()
+        "0.4.0", "cli/x", hashlib.sha256(payload).hexdigest()
     )
     assert install.download(artifact) == payload
 
@@ -241,7 +246,7 @@ def test_matching_checksum_is_accepted(monkeypatch):
 def test_manifest_without_a_checksum_is_refused():
     """The checksum is the only thing that makes the bucket trustworthy, so
     a manifest entry that omits it cannot install anything."""
-    manifest = {"version": "0.4.0", "artifacts": {"osx-arm64": {"url": "https://example.invalid/x"}}}
+    manifest = {"version": "0.4.0", "artifacts": {"osx-arm64": {"path": "cli/x"}}}
     with pytest.raises(install.InstallError, match="no sha256"):
         install._resolve(manifest, "sim", "osx-arm64")
 
@@ -342,7 +347,7 @@ def test_a_manifest_signed_by_another_key_is_refused():
 
 def test_a_tampered_manifest_is_refused(test_key):
     envelope = json.loads(signed(MANIFEST))
-    envelope["manifest"] = envelope["manifest"].replace("example.invalid", "evil.invalid")
+    envelope["manifest"] = envelope["manifest"].replace("cli/0.4.0", "cli/6.6.6")
     with pytest.raises(install.InstallError, match="signature is not valid"):
         install._verified_manifest(json.dumps(envelope).encode())
 
@@ -425,7 +430,7 @@ def test_install_writes_an_executable_and_is_found(monkeypatch, home):
         install,
         "resolve",
         lambda b, **k: install.Artifact(
-            "0.4.0", "https://example.invalid/x", hashlib.sha256(payload).hexdigest()
+            "0.4.0", "cli/x", hashlib.sha256(payload).hexdigest()
         ),
     )
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(payload))
@@ -532,7 +537,7 @@ ENGINE_FILES = {
 def fake_release(monkeypatch, files=ENGINE_FILES, version="0.9.0"):
     seen = []
     monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: (
-        seen.append(rid), install.Artifact(version=version, url="https://releases.example/engine.zip", sha256="00" * 32))[1])
+        seen.append(rid), install.Artifact(version=version, path="engine/e.zip", sha256="00" * 32))[1])
     monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip(files))
     return seen
 
@@ -576,7 +581,7 @@ def test_installed_engine_picks_the_newest_version(home, monkeypatch):
 
 def test_engine_archive_paths_must_stay_inside(home, monkeypatch):
     monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
-        version="0.9.0", url="u", sha256="00" * 32))
+        version="0.9.0", path="u", sha256="00" * 32))
     monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip({"../escape": b"x"}))
     with pytest.raises(install.InstallError):
         install.install_engine()
@@ -598,8 +603,8 @@ def test_engine_dir_explains_when_no_release_is_reachable(home, monkeypatch):
 RUST_MANIFEST = {
     "version": "0.3.0",
     "artifacts": {
-        "engine-rust-osx-arm64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
-        "engine-rust-linux-x64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
+        "engine-rust-osx-arm64": {"path": "pyrite/0.3.0/r.whl", "sha256": "00" * 32},
+        "engine-rust-linux-x64": {"path": "pyrite/0.3.0/r.whl", "sha256": "00" * 32},
     },
 }
 

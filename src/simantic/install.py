@@ -5,7 +5,7 @@ installed here is the same artifact `sim update` would have produced:
 
     releases/<product>/<channel>.json
     {"version": "0.4.0",
-     "artifacts": {"osx-arm64": {"url": ..., "sha256": ...}, ...}}
+     "artifacts": {"osx-arm64": {"path": ..., "sha256": ...}, ...}}
 
 The channel is just the manifest name, so publishing a pre-release means
 uploading a second pointer beside latest.json rather than standing up
@@ -49,31 +49,30 @@ from pathlib import Path
 from . import auth
 
 
-RELEASES_URL = "https://drjdhqfvrttolueolzif.supabase.co/storage/v1/object/public/releases"
+SUPABASE_ORIGIN = "https://drjdhqfvrttolueolzif.supabase.co"
 
 
-_PUBLIC_PREFIX = "/storage/v1/object/public/releases/"
-
-
-def object_path(url: str) -> str:
-    """The bucket object path behind a manifest `/public/` URL, host-checked
-    so a manifest cannot make us send the token's signing request elsewhere."""
-    parts = urllib.parse.urlsplit(url)
+def checked_path(path) -> str:
+    """A manifest `path` is a bare object path in the releases bucket; anything
+    else (empty, absolute, scheme, `..`) is refused before it reaches get-release."""
     if (
-        parts.scheme != "https"
-        or parts.netloc != urllib.parse.urlsplit(RELEASES_URL).netloc
-        or not parts.path.startswith(_PUBLIC_PREFIX)
+        not isinstance(path, str)
+        or not path
+        or path.startswith("/")
+        or "\\" in path
+        or "://" in path
+        or ".." in path.split("/")
     ):
-        raise InstallError(f"refusing release URL outside the releases bucket: {url}")
-    return urllib.parse.unquote(parts.path[len(_PUBLIC_PREFIX):])
+        raise InstallError(f"refusing invalid release path: {path!r}")
+    return path
 
 
 def signed_url(path: str, *, timeout: float = 30) -> str:
     """Trade the stored token for a signed URL to `path` via get-release."""
+    path = checked_path(path)
     credentials = auth.load()  # NotAuthenticated says to run `simantic auth`
-    origin = RELEASES_URL.split("/storage/", 1)[0]
     request = urllib.request.Request(
-        f"{origin}/functions/v1/get-release?path={urllib.parse.quote(path)}",
+        f"{SUPABASE_ORIGIN}/functions/v1/get-release?path={urllib.parse.quote(path)}",
         headers={"Authorization": f"Bearer {credentials.api_key}"},
     )
     try:
@@ -97,26 +96,19 @@ def signed_url(path: str, *, timeout: float = 30) -> str:
         raise InstallError(f"cannot reach the release server: {exc.reason}") from None
     except ValueError as exc:
         raise InstallError(f"release server returned invalid JSON: {exc}") from None
-    if not isinstance(url, str) or not url:
-        raise InstallError("release server returned no signed URL")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        raise InstallError("release server returned no https signed URL")
     return url
 
 
-def _release_url(url: str) -> str:
-    """The URL to actually fetch. $SIMANTIC_RELEASES_URL (staging, a local
-    directory) is read directly; the real bucket is read via a signed URL."""
-    if "SIMANTIC_RELEASES_URL" in os.environ:
-        return url
-    return signed_url(object_path(url))
-
-
-def releases_url() -> str:
-    """Where manifests are served from. $SIMANTIC_RELEASES_URL overrides.
-
-    Overridable so a release can be rehearsed against a staging host (or a
-    plain directory served over HTTP) before it is published.
-    """
-    return os.environ.get("SIMANTIC_RELEASES_URL", RELEASES_URL).rstrip("/")
+def _release_url(path: str) -> str:
+    """The URL to fetch for a bucket object path. $SIMANTIC_RELEASES_URL
+    (staging, a local directory served over HTTP) is read directly as
+    <base>/<path>; the real bucket goes through get-release."""
+    base = os.environ.get("SIMANTIC_RELEASES_URL")
+    if base is not None:
+        return f"{base.rstrip('/')}/{checked_path(path)}"
+    return signed_url(path)
 
 
 #: The manifest to read. $SIMANTIC_CHANNEL selects a pre-release channel.
@@ -195,12 +187,12 @@ def _verified_manifest(body: bytes) -> dict:
         raise InstallError(f"release manifest is not valid JSON: {exc}") from None
 
 
-def _fetch_manifest(url: str, missing: str, timeout: float) -> dict:
+def _fetch_manifest(path: str, missing: str, timeout: float) -> dict:
     try:
-        with urllib.request.urlopen(urllib.request.Request(_release_url(url)), timeout=timeout) as response:
+        with urllib.request.urlopen(urllib.request.Request(_release_url(path)), timeout=timeout) as response:
             body = response.read()
     except urllib.error.HTTPError as exc:
-        raise InstallError(f"{missing} (HTTP {exc.code} from {url})") from None
+        raise InstallError(f"{missing} (HTTP {exc.code} from {path})") from None
     except urllib.error.URLError as exc:
         raise InstallError(f"cannot reach the release server: {exc.reason}") from None
     return _verified_manifest(body)
@@ -209,7 +201,7 @@ def _fetch_manifest(url: str, missing: str, timeout: float) -> dict:
 @dataclass(frozen=True)
 class Artifact:
     version: str
-    url: str
+    path: str
     sha256: str
 
 
@@ -264,8 +256,8 @@ def fetch_manifest(
             f"unknown binary {binary!r}; expected one of {sorted(PRODUCTS)}"
         )
     channel = channel or default_channel()
-    url = f"{releases_url()}/{product}/{channel}.signed.json"
-    return _fetch_manifest(url, f"no published releases for {binary!r}", timeout)
+    path = f"{product}/{channel}.signed.json"
+    return _fetch_manifest(path, f"no published releases for {binary!r}", timeout)
 
 
 def resolve(
@@ -283,7 +275,7 @@ def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
 
     rid = rid or current_rid()
     entry = artifacts.get(rid)
-    if not entry or not entry.get("url"):
+    if not entry or not entry.get("path"):
         available = ", ".join(sorted(artifacts)) or "none"
         raise InstallError(
             f"no {rid} build in {binary} release {version} (available: {available})"
@@ -293,12 +285,12 @@ def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
         raise InstallError(
             f"{rid} build in {binary} release {version} has no sha256; refusing to install"
         )
-    return Artifact(version=version, url=entry["url"], sha256=sha256.strip().lower())
+    return Artifact(version=version, path=checked_path(entry["path"]), sha256=sha256.strip().lower())
 
 
 def download(artifact: Artifact, *, timeout: float = 300) -> bytes:
     """Fetch the artifact and verify its checksum before it is trusted."""
-    request = urllib.request.Request(_release_url(artifact.url))
+    request = urllib.request.Request(_release_url(artifact.path))
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read()
@@ -484,8 +476,8 @@ def installed_rust_engine() -> Path | None:
 
 def fetch_rust_manifest(*, channel: str | None = None, timeout: float = 30) -> dict:
     channel = channel or default_channel()
-    url = f"{releases_url()}/{RUST_ENGINE_PRODUCT}/{channel}.signed.json"
-    return _fetch_manifest(url, "no published Rust engine", timeout)
+    path = f"{RUST_ENGINE_PRODUCT}/{channel}.signed.json"
+    return _fetch_manifest(path, "no published Rust engine", timeout)
 
 
 def install_rust_engine(*, force: bool = False, channel: str | None = None) -> Path:
