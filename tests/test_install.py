@@ -17,8 +17,8 @@ PATH = "pyrite/0.4.0/osx-arm64/sim.zip"
 MANIFEST = {
     "version": "0.4.0",
     "artifacts": {
-        "osx-arm64": {"path": "pyrite/0.4.0/osx-arm64/sim.zip", "sha256": "ab" * 32},
-        "linux-x64": {"path": "pyrite/0.4.0/linux-x64/sim.zip"},
+        "sim-osx-arm64": {"path": "pyrite/0.4.0/osx-arm64/sim.zip", "sha256": "ab" * 32},
+        "sim-linux-x64": {"path": "pyrite/0.4.0/linux-x64/sim.zip"},
     },
 }
 
@@ -197,7 +197,7 @@ def test_resolves_the_artifact_for_this_machine(monkeypatch):
 
 def test_missing_rid_lists_what_is_available(monkeypatch):
     monkeypatch.setattr(install, "fetch_manifest", lambda b, **k: MANIFEST)
-    with pytest.raises(install.InstallError, match="available: linux-x64, osx-arm64"):
+    with pytest.raises(install.InstallError, match="available: sim-linux-x64, sim-osx-arm64"):
         install.resolve("sim", rid="win-x64")
 
 
@@ -615,3 +615,16 @@ def test_engine_dir_does_not_fetch_the_retired_csharp_engine(home, monkeypatch):
     monkeypatch.setenv("PATH", "")
     with pytest.raises(engine.EngineNotFound, match="Simantic.Core.dll not found"):
         engine.engine_dir()
+
+
+def test_pyrite_manifest_resolves_sim_and_rust_engine(home, monkeypatch):
+    h = "cd" * 32
+    manifest = {"version": "1.2.3", "artifacts": {
+        "sim-osx-arm64": {"path": "pyrite/1.2.3/sim-osx-arm64", "sha256": h},
+        "engine-rust-osx-arm64": {"path": "pyrite/1.2.3/r.whl", "sha256": h},
+    }}
+    monkeypatch.setattr(install, "current_rid", lambda: "osx-arm64")
+    monkeypatch.setattr(install, "_fetch_manifest", lambda *a, **k: manifest)
+    assert install.resolve("sim").path == "pyrite/1.2.3/sim-osx-arm64"
+    monkeypatch.setattr(install, "download", lambda a, timeout=300: engine_zip({"simantic_rust.abi3.so": b"x"}))
+    assert install.install_rust_engine() == install.rust_engine_root() / "1.2.3"

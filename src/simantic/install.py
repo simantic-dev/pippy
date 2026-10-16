@@ -264,7 +264,8 @@ def resolve(
     binary: str, *, rid: str | None = None, channel: str | None = None
 ) -> Artifact:
     """The artifact this machine should download."""
-    return _resolve(fetch_manifest(binary, channel=channel), binary, rid)
+    # pyrite keys artifacts `<binary>-<rid>`, e.g. `sim-osx-arm64`.
+    return _resolve(fetch_manifest(binary, channel=channel), binary, f"{binary}-{rid or current_rid()}")
 
 
 def _resolve(manifest: dict, binary: str, rid: str | None) -> Artifact:
