@@ -40,13 +40,11 @@ def _auth(args) -> int:
 
 
 def _install(args) -> int:
-    names = args.binary or [name for name, _ in BINARIES] + [install.ENGINE_KEY, install.RUST_ENGINE_KEY]
+    names = args.binary or [name for name, _ in BINARIES] + [install.RUST_ENGINE_KEY]
     failures = 0
     for name in names:
         try:
-            if name == install.ENGINE_KEY:
-                path = install.install_engine(force=args.force, channel=args.channel)
-            elif name == install.RUST_ENGINE_KEY:
+            if name == install.RUST_ENGINE_KEY:
                 path = install.install_rust_engine(force=args.force, channel=args.channel)
             else:
                 path = install.install(name, force=args.force, channel=args.channel)
@@ -74,7 +72,7 @@ def _status(args) -> int:
         except BinaryNotFound:
             print(f"  {name}: not found (run `simantic install {name}`)")
     engine = install.installed_engine()
-    print(f"  engine: {engine if engine else 'not found (fetched on first use, or `simantic install engine`)'}")
+    print(f"  engine: {engine if engine else 'not found (no longer installable; local builds only)'}")
     rust = install.installed_rust_engine()
     missing = 'not found (fetched on first use of backend="rust", or `simantic install engine-rust`)'
     print(f"  engine-rust: {rust if rust else missing}")
@@ -138,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.set_defaults(func=_auth)
 
     p_install = sub.add_parser("install", help="download simulator binaries")
-    p_install.add_argument("binary", nargs="*", help="defaults to all known binaries and both engines")
+    p_install.add_argument("binary", nargs="*", help="defaults to `sim` and `engine-rust`")
     p_install.add_argument(
         "--force", action="store_true", help="re-download even if already present"
     )
