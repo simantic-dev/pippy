@@ -1,30 +1,14 @@
 """The Rust backend through Sim, against a fake engine module. No Rust build
-required: what is tested is the Python half — platform rendering, symbol
-lookup, the expect loop, record paging, and that unsupported calls say so."""
+required: what is tested is the Python half — symbol lookup, the expect
+loop, record paging, and that unsupported calls say so."""
 import struct
 import sys
 import types
 
 import pytest
 
-from simantic import NotSupported, Sim, SimError, _elf, _replx
+from simantic import NotSupported, Sim, SimError, _elf
 from simantic.engine import load_rust
-
-
-# -- platform rendering -------------------------------------------------------
-
-def test_render_takes_defaults_and_folds_arithmetic():
-    text = "cpu: CPU.CortexM\n    PerformanceInMips: {{RCC.AHBFreq_Value:84000000 / 1000000 * 1.25}}\n" \
-           "nvic: X\n    systickFrequency: {{RCC.AHBFreq_Value:84000000}}\n    cpuType: \"{{cpu:cortex-m4f}}\""
-    out = _replx.render(text)
-    assert "PerformanceInMips: 105\n" in out
-    assert "systickFrequency: 84000000\n" in out
-    assert 'cpuType: "cortex-m4f"' in out
-
-
-def test_render_refuses_code_in_templates():
-    assert _replx.render("x: {{a:abc}}") == "x: abc"
-    assert _replx.render("x: {{a:1+2}}") == "x: 3"
 
 
 # -- ELF symbols --------------------------------------------------------------
@@ -63,8 +47,8 @@ class FakeSession:
     """Prints 'boot\\n' then 'RESULT: PASS\\n' on usart2, 1 ms apart, from t=2 ms."""
     instances = []
 
-    def __init__(self, repl_text, elf, symbols_elf=None, itm=False):
-        self.repl_text, self.elf, self.t = repl_text, elf, 0.0
+    def __init__(self, mcu, elf, board="", symbols_elf=None, itm=False):
+        self.mcu, self.board, self.elf, self.t = mcu, board, elf, 0.0
         self.symbols_elf, self.itm_on, self.pcs, self.watches = symbols_elf, itm, [], []
         self.sent, self.gpio, self.can, self.attached, self.adc = [], [], [], [], []
         self._script = [(0.002, b"boot\n"), (0.003, b"RESULT: PASS\n")]
@@ -149,7 +133,6 @@ def fake_engine(monkeypatch, tmp_path):
     load_rust.cache_clear()
     FakeSession.instances.clear()
     mcu = "FAKE-MCU"
-    monkeypatch.setattr(_replx, "model_replx", lambda _mcu: "cpu: CPU.CortexM\n    freq: {{F:84000000}}\n")
     elf = tmp_path / "fw.elf"
     elf.write_bytes(_tiny_elf({"main": (0x08000495, 0x12), "counter": (0x20000004, 0x11)}))
     yield mcu, elf
@@ -160,7 +143,7 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
     mcu, elf = fake_engine
     with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
         assert sim.backend == "rust" and sim.machines == ["machine"]
-        assert "freq: 84000000" in FakeSession.instances[0].repl_text
+        assert FakeSession.instances[0].mcu == "FAKE-MCU"
         m = sim.expect("boot")
         assert m.virtual_seconds == pytest.approx(0.002, abs=1e-9)
         m = sim.expect(r"RESULT: (PASS|FAIL)")
@@ -213,13 +196,13 @@ def test_an_engine_older_than_the_api_is_refused(tmp_path):
 def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
     mcu, elf = fake_engine
 
-    def boom(repl_text, elf_bytes):
-        raise RuntimeError("repl parse error at line 5")
+    def boom(mcu, elf_bytes, board=""):
+        raise RuntimeError("board parse error at line 5")
 
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", boom)
     with pytest.raises(Exception) as exc:
         Sim(elf=elf, mcu=mcu, backend="rust")
-    assert "repl parse error at line 5" in str(exc.value)
+    assert "board parse error at line 5" in str(exc.value)
     assert isinstance(exc.value.__cause__, RuntimeError)
 
 
@@ -243,8 +226,8 @@ def test_parts_and_unbuilt_overlay_entries_are_not_supported(fake_engine, monkey
 class CountingSession(FakeSession):
     """Reports how many objects crossed the boundary, against bytes delivered."""
 
-    def __init__(self, repl_text, elf):
-        super().__init__(repl_text, elf)
+    def __init__(self, mcu, elf, board=""):
+        super().__init__(mcu, elf, board)
         self.handed_over = 0
         self._script = [(0.001, b"x" * 10_000)]
 
@@ -321,8 +304,8 @@ def test_an_engine_without_the_debug_calls_says_to_upgrade(fake_engine, monkeypa
     mcu, elf = fake_engine
 
     class Old(FakeSession):
-        def __init__(self, repl_text, elf):
-            super().__init__(repl_text, elf)
+        def __init__(self, mcu, elf, board=""):
+            super().__init__(mcu, elf, board)
         trace_pc = property()
 
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", Old)
@@ -362,8 +345,7 @@ def test_a_scenario_runs_in_one_call_on_rust(fake_engine, monkeypatch, tmp_path)
     run = run_scenario(scenario, 2.5, base=tmp_path)
     records, logs = run.uart_records, run.warnings
     machines, media, nets, timeout, quantum = calls[0]
-    assert [(n, e) for n, _text, e in machines] == [("nodea", elf.read_bytes()), ("nodeb", elf.read_bytes())]
-    assert "freq: 84000000" in machines[0][1]
+    assert machines == [("nodea", mcu, "", elf.read_bytes()), ("nodeb", mcu, "", elf.read_bytes())]
     assert media == [("can", [("nodea", "can1"), ("nodeb", "can1")])]
     assert nets == [[("nodea", "gpioa", 3), ("nodeb", "gpiob", 4)]]
     assert (timeout, quantum) == (3, 0.0001)
