@@ -43,8 +43,7 @@ medium), `sd-card` (`bus`, `size` such as `"16MiB"`, `image`: a formatted card i
 list cannot express. Needs engine 0.5.17+.
 
 A model can require a newer engine than the one installed (the STM32H7 parts
-need 0.6.3). `Sim` then raises `SimError` naming the version it needs; update
-with `simantic install engine --force`.
+need 0.6.3). `Sim` then raises `SimError` naming the version it needs; use a newer engine build (the C# engine is no longer published).
 
 `symbols_elf=` (single-machine form) / `symbolsElfPath` (scenario machine
 entries — same key as the CLI's scenario YAML, so a scenario dict is

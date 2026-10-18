@@ -84,7 +84,7 @@ def test_start_error_names_the_fix_for_a_stale_engine():
     from simantic.session import _start_error
     stale = _start_error(Exception(
         "Error E25: Could not find suitable constructor for type 'STM32F4_RCC'.\nConstructor selection report: ..."))
-    assert "simantic install engine --force" in stale
+    assert "use a newer build" in stale
     assert "STM32F4_RCC" in stale and "selection report" not in stale
     assert _start_error(Exception("no such file")) == "could not start the simulation: no such file"
 
@@ -98,7 +98,7 @@ def test_needs_newer_engine_reads_the_models_minimum(tmp_path, monkeypatch):
     old, new = tmp_path / "0.6.1", tmp_path / "0.6.3"
     msg = _needs_newer_engine(["STM32F401RE", "STM32H753ZI"], old)
     assert "STM32H753ZI needs engine 0.6.3 or newer; 0.6.1 is installed" in msg
-    assert "simantic install engine --force" in msg
+    assert "use a newer build" in msg
     assert _needs_newer_engine(["STM32H753ZI"], new) is None
     assert _needs_newer_engine(["NOT-CACHED"], old) is None
     assert _needs_newer_engine(["STM32H753ZI"], tmp_path / "publish") is None   # dev engine: no version

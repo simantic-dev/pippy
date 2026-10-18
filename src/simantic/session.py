@@ -146,7 +146,7 @@ def _start_error(exc: Exception) -> str:
     text = str(exc)
     if "Could not find suitable constructor" in text:
         return ("could not start the simulation: this model needs a newer engine "
-                "than the one installed.\n\n  simantic install engine --force\n\n"
+                "than the one installed.\n\n  (the C# engine is no longer published; use a newer build)\n\n"
                 + text.splitlines()[0])
     return f"could not start the simulation: {text}"
 
@@ -171,7 +171,7 @@ def _needs_newer_engine(mcus, engine: Path) -> str | None:
             continue
         if needed > have:
             return (f"{mcu} needs engine {want} or newer; "
-                    f"{'.'.join(map(str, have))} is installed.\n\n  simantic install engine --force")
+                    f"{'.'.join(map(str, have))} is installed.\n\n  (the C# engine is no longer published; use a newer build)")
     return None
 
 class Sim:
@@ -521,7 +521,7 @@ class _RenodeBackend:
         text = ""
         if parts:
             if not hasattr(ns, "Parts"):
-                raise SimError("parts= needs engine 0.5.17 or newer: run `simantic install engine`")
+                raise SimError("parts= needs engine 0.5.17 or newer: use a newer engine build")
             parts = [_resolve_paths(p, self._base) for p in parts]
             text = ns.Parts.Fragment(json.dumps(parts))
         if overlay:

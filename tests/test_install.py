@@ -11,11 +11,14 @@ import pytest
 from simantic import auth, install
 from simantic._locate import BinaryNotFound, locate
 
+REAL_RELEASE_URL = install._release_url
+PATH = "pyrite/0.4.0/osx-arm64/sim.zip"
+
 MANIFEST = {
     "version": "0.4.0",
     "artifacts": {
-        "osx-arm64": {"url": "https://example.invalid/sim.zip", "sha256": "ab" * 32},
-        "linux-x64": {"url": "https://example.invalid/sim-linux.zip"},
+        "sim-osx-arm64": {"path": "pyrite/0.4.0/osx-arm64/sim.zip", "sha256": "ab" * 32},
+        "sim-linux-x64": {"path": "pyrite/0.4.0/linux-x64/sim.zip"},
     },
 }
 
@@ -26,6 +29,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
     # Fetching requires an account, so the common case here is authenticated.
     auth.save("smtc_" + "a" * 32, "dev@example.com")
+    monkeypatch.setattr(install, "_release_url", lambda path: "https://releases.invalid/" + path)
     # Most of this file is about what happens to a URL once it is known —
     # channels, products, checksums, placement. The gate that decides *which*
     # URL is exercised in "the release gate" below, and turned off here so
@@ -43,34 +47,101 @@ def zipped(name: str, body: bytes) -> bytes:
 # --- the account gate ---
 
 
+def _http_error(code, body=b""):
+    return install.urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(body))
+
+
+@pytest.mark.parametrize("path", [
+    "", None, "../pyrite/x", "pyrite/../x", "/pyrite/x", "https://evil.example/x", "a\\b",
+])
+def test_invalid_paths_are_rejected(path):
+    with pytest.raises(install.InstallError):
+        install.checked_path(path)
+    with pytest.raises(install.InstallError):
+        install._resolve({"version": "1", "artifacts": {"r": {"path": path, "sha256": "0" * 64}}}, "sim", "r")
+
+
+def test_signed_url_must_be_https(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    monkeypatch.setattr(install.urllib.request, "urlopen",
+                        lambda r, **k: io.BytesIO(b'{"url": "http://signed.example/o"}'))
+    with pytest.raises(install.InstallError, match="https"):
+        REAL_RELEASE_URL(PATH)
+
+
+def test_release_url_signs_with_the_stored_token(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    seen = []
+
+    def urlopen(request, **k):
+        seen.append(request)
+        return io.BytesIO(b'{"url": "https://signed.example/o?t=1", "expires_in": 300}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    assert REAL_RELEASE_URL(PATH) == "https://signed.example/o?t=1"
+    assert seen[0].full_url.endswith(
+        "/functions/v1/get-release?path=pyrite/0.4.0/osx-arm64/sim.zip")
+    assert seen[0].get_header("Authorization") == "Bearer smtc_" + "a" * 32
+
+
+def test_403_shows_the_server_message(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+
+    def urlopen(request, **k):
+        raise _http_error(403, b'{"error": "account not approved yet"}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    with pytest.raises(install.InstallError, match="account not approved yet"):
+        REAL_RELEASE_URL(PATH)
+
+
+def test_401_says_to_log_in(monkeypatch):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+
+    def urlopen(request, **k):
+        raise _http_error(401, b'{"error": "bad"}')
+
+    monkeypatch.setattr(install.urllib.request, "urlopen", urlopen)
+    with pytest.raises(install.InstallError, match="simantic auth"):
+        REAL_RELEASE_URL(PATH)
+
+
+def test_no_token_says_how_to_log_in(monkeypatch, home):
+    monkeypatch.delenv("SIMANTIC_RELEASES_URL", raising=False)
+    (home / ".sim_id").unlink()
+    with pytest.raises(auth.NotAuthenticated, match="simantic auth"):
+        REAL_RELEASE_URL(PATH)
+
+
 # --- release channels ---
 
 
 def test_latest_is_the_default_channel(monkeypatch):
-    assert _requested_url(monkeypatch, {}) .endswith("/cli/latest.signed.json")
+    assert _requested_url(monkeypatch, {}) .endswith("/pyrite/latest.signed.json")
 
 
 def test_channel_argument_selects_the_manifest(monkeypatch):
     url = _requested_url(monkeypatch, {}, channel="testing")
-    assert url.endswith("/cli/testing.signed.json")
+    assert url.endswith("/pyrite/testing.signed.json")
 
 
 def test_environment_selects_the_channel(monkeypatch):
     """So a tester can opt in once instead of on every command."""
     assert _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}).endswith(
-        "/cli/testing.signed.json"
+        "/pyrite/testing.signed.json"
     )
 
 
 def test_explicit_channel_beats_the_environment(monkeypatch):
     url = _requested_url(monkeypatch, {"SIMANTIC_CHANNEL": "testing"}, channel="latest")
-    assert url.endswith("/cli/latest.signed.json")
+    assert url.endswith("/pyrite/latest.signed.json")
 
 
 def test_releases_host_can_be_redirected(monkeypatch):
     """Rehearse a release against staging before publishing it."""
+    monkeypatch.setattr(install, "_release_url", REAL_RELEASE_URL)
     url = _requested_url(monkeypatch, {"SIMANTIC_RELEASES_URL": "http://localhost:8765/"})
-    assert url == "http://localhost:8765/cli/latest.signed.json"
+    assert url == "http://localhost:8765/pyrite/latest.signed.json"
 
 
 def _requested_url(monkeypatch, env, *, binary="sim", **kwargs) -> str:
@@ -126,7 +197,7 @@ def test_resolves_the_artifact_for_this_machine(monkeypatch):
 
 def test_missing_rid_lists_what_is_available(monkeypatch):
     monkeypatch.setattr(install, "fetch_manifest", lambda b, **k: MANIFEST)
-    with pytest.raises(install.InstallError, match="available: linux-x64, osx-arm64"):
+    with pytest.raises(install.InstallError, match="available: sim-linux-x64, sim-osx-arm64"):
         install.resolve("sim", rid="win-x64")
 
 
@@ -158,7 +229,7 @@ def test_checksum_mismatch_refuses_the_binary(monkeypatch):
     monkeypatch.setattr(
         install.urllib.request, "urlopen", _fake_urlopen(b"tampered")
     )
-    artifact = install.Artifact("0.4.0", "https://example.invalid/x", "00" * 32)
+    artifact = install.Artifact("0.4.0", "pyrite/x", "00" * 32)
     with pytest.raises(install.InstallError, match="checksum mismatch"):
         install.download(artifact)
 
@@ -167,7 +238,7 @@ def test_matching_checksum_is_accepted(monkeypatch):
     payload = b"genuine"
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(payload))
     artifact = install.Artifact(
-        "0.4.0", "https://example.invalid/x", hashlib.sha256(payload).hexdigest()
+        "0.4.0", "pyrite/x", hashlib.sha256(payload).hexdigest()
     )
     assert install.download(artifact) == payload
 
@@ -175,7 +246,7 @@ def test_matching_checksum_is_accepted(monkeypatch):
 def test_manifest_without_a_checksum_is_refused():
     """The checksum is the only thing that makes the bucket trustworthy, so
     a manifest entry that omits it cannot install anything."""
-    manifest = {"version": "0.4.0", "artifacts": {"osx-arm64": {"url": "https://example.invalid/x"}}}
+    manifest = {"version": "0.4.0", "artifacts": {"osx-arm64": {"path": "pyrite/x"}}}
     with pytest.raises(install.InstallError, match="no sha256"):
         install._resolve(manifest, "sim", "osx-arm64")
 
@@ -276,7 +347,7 @@ def test_a_manifest_signed_by_another_key_is_refused():
 
 def test_a_tampered_manifest_is_refused(test_key):
     envelope = json.loads(signed(MANIFEST))
-    envelope["manifest"] = envelope["manifest"].replace("example.invalid", "evil.invalid")
+    envelope["manifest"] = envelope["manifest"].replace("pyrite/0.4.0", "pyrite/6.6.6")
     with pytest.raises(install.InstallError, match="signature is not valid"):
         install._verified_manifest(json.dumps(envelope).encode())
 
@@ -359,7 +430,7 @@ def test_install_writes_an_executable_and_is_found(monkeypatch, home):
         install,
         "resolve",
         lambda b, **k: install.Artifact(
-            "0.4.0", "https://example.invalid/x", hashlib.sha256(payload).hexdigest()
+            "0.4.0", "pyrite/x", hashlib.sha256(payload).hexdigest()
         ),
     )
     monkeypatch.setattr(install.urllib.request, "urlopen", _fake_urlopen(payload))
@@ -456,47 +527,11 @@ def engine_zip(files: dict[str, bytes]) -> bytes:
     return buf.getvalue()
 
 
-ENGINE_FILES = {
-    "Simantic.Core.dll": b"dll",
-    "sim.runtimeconfig.json": b"{}",
-    "dotnet/host/fxr/10.0.0/libhostfxr.dylib": b"fxr",
-}
-
-
-def fake_release(monkeypatch, files=ENGINE_FILES, version="0.9.0"):
-    seen = []
-    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: (
-        seen.append(rid), install.Artifact(version=version, url="https://releases.example/engine.zip", sha256="00" * 32))[1])
-    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip(files))
-    return seen
-
-
-def test_install_engine_unpacks_under_a_version_dir(home, monkeypatch):
-    fake_release(monkeypatch)
-    target = install.install_engine()
-    assert target == install.engine_root() / "0.9.0"
-    assert (target / "Simantic.Core.dll").read_bytes() == b"dll"
-    assert (target / "dotnet" / "host" / "fxr" / "10.0.0" / "libhostfxr.dylib").exists()
-    assert install.installed_engine() == target
-
-
-def test_install_engine_asks_for_the_engine_rid(home, monkeypatch):
-    seen = fake_release(monkeypatch)
-    install.install_engine()
-    assert seen == [f"engine-{install.current_rid()}"]
-
-
 def test_version_order_ignores_junk_and_prereleases():
     names = ["zzz", "0.6.2-rc1", "0.6.2", "0.10.0", "0.9.1"]
     assert max(names, key=install._version_key) == "0.10.0"
     assert max(["0.6.2-rc1", "0.6.2"], key=install._version_key) == "0.6.2"
     assert max(["zzz", "0.6.2"], key=install._version_key) == "0.6.2"
-
-
-def test_engine_version_must_be_a_plain_directory_name(home, monkeypatch):
-    fake_release(monkeypatch, version="../../lib")
-    with pytest.raises(install.InstallError, match="not a valid directory name"):
-        install.install_engine()
 
 
 def test_installed_engine_picks_the_newest_version(home, monkeypatch):
@@ -508,32 +543,13 @@ def test_installed_engine_picks_the_newest_version(home, monkeypatch):
     assert install.installed_engine().name == "0.10.0"
 
 
-def test_engine_archive_paths_must_stay_inside(home, monkeypatch):
-    monkeypatch.setattr(install, "resolve", lambda binary, rid=None, channel=None: install.Artifact(
-        version="0.9.0", url="u", sha256="00" * 32))
-    monkeypatch.setattr(install, "download", lambda artifact, timeout=300: engine_zip({"../escape": b"x"}))
-    with pytest.raises(install.InstallError):
-        install.install_engine()
-
-
-def test_engine_dir_explains_when_no_release_is_reachable(home, monkeypatch):
-    from simantic import engine
-
-    monkeypatch.delenv("SIMANTIC_SIM", raising=False)
-    monkeypatch.delenv("SIMANTIC_ENGINE_DIR", raising=False)
-    monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(install, "install_engine", lambda **kw: (_ for _ in ()).throw(install.InstallError("offline")))
-    with pytest.raises(engine.EngineNotFound, match="could not fetch the engine: offline"):
-        engine.engine_dir()
-
-
 # -- the Rust engine ----------------------------------------------------------
 
 RUST_MANIFEST = {
     "version": "0.3.0",
     "artifacts": {
-        "engine-rust-osx-arm64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
-        "engine-rust-linux-x64": {"url": "https://releases.example/r.whl", "sha256": "00" * 32},
+        "engine-rust-osx-arm64": {"path": "pyrite/0.3.0/r.whl", "sha256": "00" * 32},
+        "engine-rust-linux-x64": {"path": "pyrite/0.3.0/r.whl", "sha256": "00" * 32},
     },
 }
 
@@ -589,3 +605,26 @@ def test_a_directory_without_the_module_is_not(tmp_path):
     (tmp_path / "simantic_rust-0.3.0.dist-info").mkdir()
     (tmp_path / "simantic_rust").mkdir()          # no __init__.py: not importable
     assert not install.is_rust_engine(tmp_path)
+
+
+def test_engine_dir_does_not_fetch_the_retired_csharp_engine(home, monkeypatch):
+    from simantic import engine
+
+    monkeypatch.delenv("SIMANTIC_SIM", raising=False)
+    monkeypatch.delenv("SIMANTIC_ENGINE_DIR", raising=False)
+    monkeypatch.setenv("PATH", "")
+    with pytest.raises(engine.EngineNotFound, match="Simantic.Core.dll not found"):
+        engine.engine_dir()
+
+
+def test_pyrite_manifest_resolves_sim_and_rust_engine(home, monkeypatch):
+    h = "cd" * 32
+    manifest = {"version": "1.2.3", "artifacts": {
+        "sim-osx-arm64": {"path": "pyrite/1.2.3/sim-osx-arm64", "sha256": h},
+        "engine-rust-osx-arm64": {"path": "pyrite/1.2.3/r.whl", "sha256": h},
+    }}
+    monkeypatch.setattr(install, "current_rid", lambda: "osx-arm64")
+    monkeypatch.setattr(install, "_fetch_manifest", lambda *a, **k: manifest)
+    assert install.resolve("sim").path == "pyrite/1.2.3/sim-osx-arm64"
+    monkeypatch.setattr(install, "download", lambda a, timeout=300: engine_zip({"simantic_rust.abi3.so": b"x"}))
+    assert install.install_rust_engine() == install.rust_engine_root() / "1.2.3"

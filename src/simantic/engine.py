@@ -56,7 +56,7 @@ def check_engine_version(d: Path) -> None:
         have = ".".join(str(p) for p in found)
         raise EngineTooOld(
             f"engine {have} at {d} is older than {want}, which this package needs. "
-            f"Run `simantic install engine --force` to fetch the current one."
+            f"Use a newer engine build."
         )
 
 
@@ -73,9 +73,8 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
 
     Order: an explicit path, $SIMANTIC_ENGINE_DIR, a development `sim` whose
     publish directory is beside it ($SIMANTIC_SIM), then the managed install
-    under ~/.simantic/engine. When nothing is there, the engine is fetched
-    from the public release — so the first `Sim(...)` after `pip install`
-    just works.
+    under ~/.simantic/engine. The C# engine is no longer published or
+    fetched; the Rust engine is the installable one.
     """
     candidates = []
     if explicit is not None:
@@ -92,13 +91,8 @@ def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = 
     managed = install.installed_engine()
     if managed is not None:
         return managed
-    if fetch:
-        try:
-            return install.install_engine()
-        except install.InstallError as exc:
-            raise EngineNotFound(f"could not fetch the engine: {exc}") from None
     raise EngineNotFound(
-        f"Simantic.Core.dll not found. Run `simantic install engine`, or set ${ENV_DIR}."
+        f"Simantic.Core.dll not found. Set ${ENV_DIR}."
     )
 
 
