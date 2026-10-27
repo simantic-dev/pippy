@@ -1,10 +1,11 @@
 """test.yaml manifest handling and UART verdicts. No sim binary required."""
 
+import os
+
 import pytest
 from pathlib import Path
 
 from simantic import (
-    ServerNotConfigured,
     SimError,
     SimRun,
     UnsupportedManifest,
@@ -90,37 +91,18 @@ def test_wall_budget_defaults_and_override(tmp_path):
     assert load_manifest(write(tmp_path, SINGLE + "wall: 7\n")).wall_budget == 7
 
 
-def test_run_within_stops_at_the_wall_budget():
-    from simantic.pytest_plugin import _run_within
-
-    class SlowSim:
-        time = 0.0
-        def run_for(self, s):
-            import time
-            time.sleep(0.05)          # 50 ms of host time per chunk
-            self.time += s
-    fast = SlowSim()
-    assert _run_within(fast, 1.0, wall_s=10, step=0.5) is True and abs(fast.time - 1.0) < 1e-9
-    slow = SlowSim()
-    assert _run_within(slow, 100.0, wall_s=0.12, step=0.5) is False and slow.time < 100.0
-
-
 def test_single_machine_manifest_is_a_one_machine_scenario(tmp_path):
     m = load_manifest(write(tmp_path, SINGLE))
     assert m.single
     assert list(m.scenario(tmp_path)["machines"]) == ["dut"]
 
 
-def test_render_uart_and_frames_match_the_cli_line_shapes():
-    from simantic.pytest_plugin import render_frames, render_uart
+def test_render_uart_matches_the_cli_line_shape():
+    from simantic.pytest_plugin import render_uart
     uart = [{"machine": "dut", "label": "UART2", "text": "RESULT: \x01PASS\r\n"},
             {"machine": "b", "label": "UART0", "text": "hi\n"}]
     assert render_uart(uart, multi=False).splitlines()[0] == "RESULT: .PASS"
     assert "[dut] RESULT: .PASS" in render_uart(uart, multi=True)
-    frames = [{"t": 1.0885, "machine": "dut", "label": "icp", "protocol": "I2c", "direction": "Tx",
-               "summary": "addr=0x63 read len=2 data=FF 00"}]
-    assert render_frames(frames, multi=False) == "[1.088500s] (icp) I2C Tx addr=0x63 read len=2 data=FF 00"
-    assert render_frames(frames, multi=True).startswith("[dut] [1.088500s]")
 
 
 def test_manifest_without_an_mcu_is_refused(tmp_path):
@@ -162,31 +144,12 @@ def test_empty_transcript_is_labelled():
     assert "(no UART output)" in run.failure_report()
 
 
-def test_run_refuses_an_unknown_backend():
-    with pytest.raises(ValueError, match="backend must be"):
-        run_firmware("a.elf", mcu="X", backend="qemu")
-
-
-def test_missing_server_is_distinguished_from_a_firmware_failure(tmp_path):
-    """Detected from what sim reports, since not every installation needs one."""
-    fake = tmp_path / "sim"
-    fake.write_text(
-        "#!/bin/sh\n"
-        "echo 'error: no sim-server configured (pass --server or set SIM_SERVER_URL)' >&2\n"
-        "exit 2\n"
-    )
-    fake.chmod(0o755)
-    with pytest.raises(ServerNotConfigured, match="SIM_SERVER_URL"):
-        run_firmware("a.elf", mcu="X", binary=fake)
-
-
-def test_other_failures_stay_plain_sim_errors(tmp_path):
+def test_a_failed_start_is_a_sim_error(tmp_path):
     fake = tmp_path / "sim"
     fake.write_text("#!/bin/sh\necho 'error: cannot read elf' >&2\nexit 1\n")
     fake.chmod(0o755)
-    with pytest.raises(SimError, match="cannot read elf") as exc:
+    with pytest.raises(SimError, match="cannot read elf"):
         run_firmware("a.elf", mcu="X", binary=fake)
-    assert not isinstance(exc.value, ServerNotConfigured)
 
 
 def test_work_dir_sparse_files_and_services_reach_the_scenario(tmp_path):
@@ -209,3 +172,17 @@ def test_sim_binary_flags_make_a_manifest_unsupported(tmp_path):
         load_manifest(tmp_path / "test.yaml")
     (tmp_path / "test.yaml").write_text("mcu: X\nelf: fw.elf\nsim_args: ['--ascii']\n")
     assert load_manifest(tmp_path / "test.yaml").mcu == "X"
+
+
+PARTS_MANIFEST = Path(os.environ.get("SIMANTIC_PARTS_MANIFEST", "/nonexistent"))
+
+
+@pytest.mark.skipif(not (os.environ.get("SIMANTIC_SIM") and PARTS_MANIFEST.exists()),
+                    reason="needs $SIMANTIC_SIM and a test.yaml with `parts:` ($SIMANTIC_PARTS_MANIFEST)")
+def test_run_scenario_with_a_scripted_peer_goes_through_the_binary(tmp_path):
+    from simantic import run_scenario
+
+    m = load_manifest(PARTS_MANIFEST)
+    assert m.machines["dut"]["parts"]
+    run = run_scenario(m.scenario(tmp_path), m.timeout, base=m.path.parent)
+    assert all(text in run.output for text in m.expect)

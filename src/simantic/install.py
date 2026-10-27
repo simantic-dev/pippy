@@ -374,27 +374,6 @@ def install(binary: str, *, force: bool = False, channel: str | None = None) -> 
     return target
 
 
-# -- the engine: Simantic.Core + a private .NET runtime, for in-process use ----
-
-def engine_root() -> Path:
-    """Where engine releases live: ~/.simantic/engine/<version>/."""
-    return simantic_home() / "engine"
-
-
-def installed_engine() -> Path | None:
-    """The newest installed engine directory, or None."""
-    root = engine_root()
-    if not root.exists():
-        return None
-    candidates = [
-        d for d in root.iterdir()
-        if (d / "Simantic.Core.dll").exists() and (d / "sim.runtimeconfig.json").exists()
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda d: _version_key(d.name))
-
-
 def _version_key(name: str) -> tuple:
     """Numeric release order. Anything that is not `N.N.N[-pre]` sorts last,
     so a stray directory under the engine root can never win the election."""

@@ -141,8 +141,8 @@ def fake_engine(monkeypatch, tmp_path):
 
 def test_expect_records_and_symbols_on_rust(fake_engine):
     mcu, elf = fake_engine
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
-        assert sim.backend == "rust" and sim.machines == ["machine"]
+    with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
+        assert sim.machines == ["machine"]
         assert FakeSession.instances[0].mcu == "FAKE-MCU"
         m = sim.expect("boot")
         assert m.virtual_seconds == pytest.approx(0.002, abs=1e-9)
@@ -168,30 +168,15 @@ def test_expect_records_and_symbols_on_rust(fake_engine):
 
 def test_unsupported_calls_say_so(fake_engine):
     mcu, elf = fake_engine
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
         with pytest.raises(NotSupported):
             sim.inject_radio("radio", b"\x01")
     with pytest.raises(NotSupported, match="one machine"):
         Sim(scenario={"machines": {"a": {"elf": str(elf), "mcu": mcu},
-                                   "b": {"elf": str(elf), "mcu": mcu}}}, backend="rust")
-
-
-def test_backend_name_is_validated():
-    with pytest.raises(ValueError, match="backend"):
-        Sim(elf="fw.elf", mcu="X", backend="qemu")
+                                   "b": {"elf": str(elf), "mcu": mcu}}})
 
 
 # -- the contracts pyrenode3 lacks (docs/competitors/pyrenode3.md §4.7/§4.8) --
-
-def test_an_engine_older_than_the_api_is_refused(tmp_path):
-    from simantic.engine import EngineTooOld, check_engine_version
-
-    check_engine_version(tmp_path / "0.5.4")     # exactly the minimum
-    check_engine_version(tmp_path / "0.6.0")
-    check_engine_version(tmp_path / "dev-publish")  # unversioned: developer's own
-    with pytest.raises(EngineTooOld, match="0.5.3"):
-        check_engine_version(tmp_path / "0.5.3")
-
 
 def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
     mcu, elf = fake_engine
@@ -201,7 +186,7 @@ def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
 
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", boom)
     with pytest.raises(Exception) as exc:
-        Sim(elf=elf, mcu=mcu, backend="rust")
+        Sim(elf=elf, mcu=mcu)
     assert "board parse error at line 5" in str(exc.value)
     assert isinstance(exc.value.__cause__, RuntimeError)
 
@@ -209,15 +194,15 @@ def test_engine_failures_keep_their_cause(fake_engine, monkeypatch):
 def test_parts_and_unbuilt_overlay_entries_are_not_supported(fake_engine, monkeypatch, tmp_path):
     mcu, elf = fake_engine
     with pytest.raises(NotSupported, match="parts="):
-        Sim(elf=elf, mcu=mcu, parts=[{"type": "spi-slave"}], backend="rust")
+        Sim(elf=elf, mcu=mcu, parts=[{"type": "spi-slave"}])
 
     monkeypatch.setattr(FakeSession, "skipped", lambda self: ["dma1 (DMA.STM32DMA)", "imu (SPI.NoSuchImu)"], raising=False)
     overlay = tmp_path / "board.board"
     overlay.write_text("imu: SPI.NoSuchImu @ spi1\n")
     with pytest.raises(NotSupported, match="imu"):
-        Sim(elf=elf, mcu=mcu, overlay=overlay, backend="rust")
+        Sim(elf=elf, mcu=mcu, overlay=overlay)
     # The model's own gaps are logged, not fatal.
-    with Sim(elf=elf, mcu=mcu, backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu) as sim:
         assert any("dma1" in r["message"] for r in sim.logs())
 
 
@@ -247,7 +232,7 @@ def test_a_burst_crosses_the_boundary_as_runs_not_per_byte(fake_engine, monkeypa
     """
     mcu, elf = fake_engine
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", CountingSession)
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
         sim.run_for(0.002)
         text = sim.read_uart(from_start=True)
     session = CountingSession.instances[-1]
@@ -259,14 +244,14 @@ def test_records_are_paged_not_returned_whole(fake_engine):
     """Observation is pulled in bounded pages, so a long run cannot hand the
     caller one unbounded list built object by object."""
     mcu, elf = fake_engine
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
         page, cursor, truncated = sim._b.records("uart", 0, 1)
         assert len(page) <= 1 and cursor <= 1 and isinstance(truncated, bool)
 
 
 def test_threads_heap_and_interrupts_on_rust(fake_engine):
     mcu, elf = fake_engine
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust", trace_interrupts=True) as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2", trace_interrupts=True) as sim:
         sim.run_for(0.002)
         assert [(r["direction"], r["name"]) for r in sim.interrupts()] == [("Enter", "SysTick"), ("Exit", "SysTick")]
         sim.run_for(0.003)
@@ -276,14 +261,14 @@ def test_threads_heap_and_interrupts_on_rust(fake_engine):
         assert threads["threads"][0]["name"] == "main" and threads["threads"][0]["stackHighWaterMarkBytes"] == 200
         assert sim.heap() == {"allocator": "sys_heap", "arenaSizeBytes": 4096, "usedBytes": 1096,
                               "freeBytes": 3000, "minimumFreeBytes": None}
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust") as sim:
+    with Sim(elf=elf, mcu=mcu, uart="usart2") as sim:
         sim.run_for(0.01)
         assert sim.interrupts() == []
 
 
 def test_symbol_trace_memory_trace_and_itm_on_rust(fake_engine, tmp_path):
     mcu, elf = fake_engine
-    with Sim(elf=elf, mcu=mcu, uart="usart2", backend="rust", itm=True,
+    with Sim(elf=elf, mcu=mcu, uart="usart2", itm=True,
              trace_symbols=["main"], trace_memory=["counter", "0x20000010:8"]) as sim:
         main, counter = sim.symbol("main"), sim.symbol("counter")
         sim.run_for(0.001)
@@ -296,7 +281,7 @@ def test_symbol_trace_memory_trace_and_itm_on_rust(fake_engine, tmp_path):
         assert [(r["watch"], r["kind"], r["value"]) for r in trace] == [
             ("counter", "Write", 7), ("0x20000010:8", "Write", 7), ("counter", "Read", None), ("0x20000010:8", "Read", None)]
         assert [(r["port"], r["text"]) for r in sim.itm()] == [(0, "hi\n")]
-    with Sim(elf=elf, mcu=mcu, backend="rust", symbols_elf=elf) as sim:
+    with Sim(elf=elf, mcu=mcu, symbols_elf=elf) as sim:
         assert FakeSession.instances[-1].symbols_elf == elf.read_bytes() and sim.itm() == []
 
 
@@ -310,113 +295,13 @@ def test_an_engine_without_the_debug_calls_says_to_upgrade(fake_engine, monkeypa
 
     monkeypatch.setattr(sys.modules["simantic_rust"], "Session", Old)
     with pytest.raises(NotSupported, match="install engine-rust"):
-        Sim(elf=elf, mcu=mcu, backend="rust", itm=True)
+        Sim(elf=elf, mcu=mcu, itm=True)
     with pytest.raises(NotSupported, match="install engine-rust"):
-        Sim(elf=elf, mcu=mcu, backend="rust", trace_symbols=["main"])
+        Sim(elf=elf, mcu=mcu, trace_symbols=["main"])
 
 
-# -- one-shot scenarios --------------------------------------------------------
-
-def _fake_run_scenario(calls, skipped=()):
-    def run_scenario(machines, media, nets, services, timeout_seconds, quantum, **trace):
-        calls.append((machines, media, nets, timeout_seconds, quantum))
-        result = ([("nodea", "usart2"), ("nodeb", "usart2")],
-                  [(0.1, 0, b"RESULT: PASS\n"), (0.2, 1, b"RESULT: PASS\n")], ["w"], list(skipped))
-        if not trace:
-            return result  # an engine that predates tracing returns four
-        calls.append(trace)
-        (machine, main), (_, watched, _len) = trace["trace_pc"][0], trace["trace_memory"][0]
-        return (*result, ([(0.5, machine, 0, main, [1, 2, 3, 4])],
-                          [(0.6, machine, watched, 4, 7, True)],
-                          [(0.7, "nodeb", 0, 15, True)]))
-    return run_scenario
-
-
-def test_a_scenario_runs_in_one_call_on_rust(fake_engine, monkeypatch, tmp_path):
-    from simantic._rust import run_scenario
-    from simantic.mcu import render_uart
-
+def test_gdb_port_is_refused_not_silently_dropped(fake_engine):
     mcu, elf = fake_engine
-    calls = []
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario(calls), raising=False)
-    scenario = {"machines": {"nodea": {"mcu": mcu, "elf": str(elf)}, "nodeb": {"mcu": mcu, "elf": str(elf)}},
-                "media": [{"type": "can", "connect": ["nodea.can1", "nodeb.can1"]}],
-                "nets": [["nodea.gpioa.3", "nodeb.gpiob.4"]], "quantum": 0.0001}
-    run = run_scenario(scenario, 2.5, base=tmp_path)
-    records, logs = run.uart_records, run.warnings
-    machines, media, nets, timeout, quantum = calls[0]
-    assert machines == [("nodea", mcu, "", elf.read_bytes()), ("nodeb", mcu, "", elf.read_bytes())]
-    assert media == [("can", [("nodea", "can1"), ("nodeb", "can1")])]
-    assert nets == [[("nodea", "gpioa", 3), ("nodeb", "gpiob", 4)]]
-    assert (timeout, quantum) == (3, 0.0001)
-    assert render_uart(records, multi=True) == "[nodea] RESULT: PASS\n[nodea] \n[nodeb] RESULT: PASS\n[nodeb] "
-    assert logs == ["w"]
-
-
-def test_a_scenario_with_parts_or_an_old_engine_is_not_supported(fake_engine, monkeypatch, tmp_path):
-    from simantic._rust import run_scenario
-
-    mcu, elf = fake_engine
-    one = {"machines": {"dut": {"mcu": mcu, "elf": str(elf)}}}
-    with pytest.raises(NotSupported, match="install engine-rust"):
-        run_scenario(one, 1, base=tmp_path)
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario([]), raising=False)
-    with pytest.raises(NotSupported, match="parts="):
-        run_scenario({"machines": {"dut": {"mcu": mcu, "elf": str(elf), "parts": [{"name": "x"}]}}}, 1, base=tmp_path)
-    overlay = tmp_path / "o.board"
-    overlay.write_text("imu: Sensors.Nope @ i2c1 0x68\n")
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario",
-                        _fake_run_scenario([], skipped=["machine 'dut': imu (Sensors.Nope)"]))
-    with pytest.raises(NotSupported, match="imu"):
-        run_scenario({"machines": {"dut": {"mcu": mcu, "elf": str(elf), "overlay": str(overlay)}}}, 1, base=tmp_path)
-
-
-def test_run_firmware_on_rust_needs_no_sim_binary(fake_engine, monkeypatch, tmp_path):
-    from simantic import run_firmware
-
-    mcu, elf = fake_engine
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario([]), raising=False)
-    run = run_firmware(elf, mcu=mcu, backend="rust", expect=["RESULT: PASS"], expect_absent=["FAIL"])
-    assert run.passed and run.runner == "rust engine" and "RESULT: PASS" in run.output
-
-
-def test_run_firmware_refuses_tlib():
-    from simantic import run_firmware
-
-    with pytest.raises(ValueError, match="renode"):
-        run_firmware("fw.elf", mcu="STM32F401RE", backend="tlib")
-
-
-def test_a_one_shot_scenario_returns_its_traces(fake_engine, monkeypatch, tmp_path):
-    from simantic import _elf, run_scenario
-
-    mcu, elf = fake_engine
-    symbol, address = next(iter(_elf.symbols(elf.read_bytes()).items()))
-    calls = []
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario(calls), raising=False)
-    scenario = {"machines": {"nodea": {"mcu": mcu, "elf": str(elf)}, "nodeb": {"mcu": mcu, "elf": str(elf)}}}
-    run = run_scenario(scenario, 1, base=tmp_path, trace_symbols=[symbol], trace_memory=["0x20000000:8"],
-                       trace_interrupts=True)
-    assert calls[1] == {"trace_pc": [("nodea", address), ("nodeb", address)],
-                        "trace_memory": [("nodea", 0x20000000, 8), ("nodeb", 0x20000000, 8)],
-                        "trace_interrupts": True}
-    hit, = run.symbol_trace
-    assert (hit["machine"], hit["symbol"], hit["args"][0]["register"], hit["args"][0]["value"]) == ("nodea", symbol, "r0", 1)
-    assert run.memory_trace == [{"t": 0.6, "machine": "nodea", "kind": "Write", "address": 0x20000000, "value": 7,
-                                 "watch": "0x20000000:8"}]
-    assert run.interrupts == [{"t": 0.7, "machine": "nodeb", "direction": "Enter", "exception": 15, "name": "SysTick"}]
-    assert run.output.startswith("[nodea] RESULT: PASS")
-    with pytest.raises(SimError, match="no symbol"):
-        run_scenario(scenario, 1, base=tmp_path, trace_symbols=["no_such_function"])
-
-
-def test_gdb_port_is_refused_not_silently_dropped(fake_engine, monkeypatch, tmp_path):
-    from simantic._rust import run_scenario
-
-    mcu, elf = fake_engine
-    monkeypatch.setattr(sys.modules["simantic_rust"], "run_scenario", _fake_run_scenario([]), raising=False)
     machine = {"mcu": mcu, "elf": str(elf), "gdbPort": 3333}
     with pytest.raises(NotSupported, match="gdbPort"):
-        run_scenario({"machines": {"dut": machine}}, 1, base=tmp_path)
-    with pytest.raises(NotSupported, match="gdbPort"):
-        Sim(scenario={"machines": {"dut": machine}}, backend="rust")
+        Sim(scenario={"machines": {"dut": machine}})

@@ -71,10 +71,8 @@ def _status(args) -> int:
             print(f"  {name}: {locate(name, env)}")
         except BinaryNotFound:
             print(f"  {name}: not found (run `simantic install {name}`)")
-    engine = install.installed_engine()
-    print(f"  engine: {engine if engine else 'not found (no longer installable; local builds only)'}")
     rust = install.installed_rust_engine()
-    missing = 'not found (fetched on first use of backend="rust", or `simantic install engine-rust`)'
+    missing = 'not found (fetched on first use of `Sim`, or `simantic install engine-rust`)'
     print(f"  engine-rust: {rust if rust else missing}")
     print(telemetry.describe())
     return 0
