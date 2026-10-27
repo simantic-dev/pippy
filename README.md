@@ -10,48 +10,34 @@
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT licence">
 </p>
 
-Nothing to plug in, nothing to flash. Simantic boots your real ELF on a
-simulated microcontroller and hands you the whole machine from Python. Watch it
-print, press a button, read a variable straight out of RAM.
+The `sim` binary is the simulator. This package installs it, runs it, and turns
+its output into Python objects and pytest results. Everything the binary does
+(several machines, Python scripted peers, media and bridges, `--record`,
+`--trace-symbol`, `--real-time`) works from Python because Python just runs it.
 
 ```bash
 pip install simantic
 ```
 
 ```python
-from simantic import Sim
+import simantic
 
-with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
-    sim.expect("ready")
-    sim.inject_gpio("gpioc", 13, True)      # press the user button
-    sim.expect("button pressed")
-    assert sim.read_u32("press_count") == 1
+run = simantic.run_firmware("fw.elf", mcu="STM32F401RE", expect=["ready"])
+assert run.passed, run.failure_report()
 ```
 
-That is a whole test. No probe, no breakpoint, no waiting on hardware.
+That is a whole test. No probe, no breakpoint, no waiting on hardware. Time is
+virtual, so a run comes out the same every time, on your laptop and in CI.
 
-Three things you get that a bench cannot give you:
-
-* **See inside.** Read any variable, register, or RTOS thread while the
-  firmware runs, without halting it.
-* **Poke it.** Press buttons, send CAN frames, feed the radio, all from your
-  script.
-* **Repeat exactly.** Time moves only when you ask, so a run comes out the same
-  every time, on your laptop and in CI.
-
-The simulator lives inside your Python process, so there is no server to start
-and no port to talk to.
-
-> **Alpha, version 0.4.x.** We are still moving things around, so the API can
-> change without a deprecation period. Pin an exact version
-> (`simantic==0.4.2`) if you depend on it, and please hold off on production
-> pipelines for now. Tell us what breaks.
+> **Alpha, version 0.5.x.** 0.5.0 is breaking: the Renode/C# engine is gone and
+> pyrite (the Rust `sim` binary) is the only engine. The API can still change
+> without a deprecation period, so pin an exact version.
 
 ## Setup
 
-`pip install` is the whole setup. The first `Sim(...)` downloads the engine it
-needs into `~/.simantic/` and checks it against the published checksum. The
-wheel on PyPI holds only Python code; the simulators are never inside it.
+`pip install` is the whole setup. The first run downloads the `sim` binary into
+`~/.simantic/` and checks it against the published checksum. The wheel on PyPI
+holds only Python code.
 
 Sign in once if you want to name MCUs by part number:
 
@@ -65,19 +51,99 @@ That opens a browser tab, much like `gh auth login`, and saves a token to
 Already have the `sim` binary? Put it on PATH or point `$SIMANTIC_SIM` at it.
 `simantic status` shows what resolved.
 
-## Pick your engine
+## Run a scenario
 
-The same script runs on either engine. You choose per simulation:
+`run_scenario` runs `sim run --scenario ... --record DIR` and reads the recorded
+bundle back. A scenario can hold several machines, Python scripted peers
+(`parts`) and the media that join them:
 
 ```python
-Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")                  # Renode engine, the default
-Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2", backend="rust")  # our Rust engine
+scenario = {
+    "machines": {
+        "dut":  {"mcu": "STM32H753IITX", "elf": "fc.elf",
+                 "parts": [{"name": "gpspeer", "type": "uart-device",
+                            "baud": 230400, "script": "gps.py"}]},
+        "node": {"mcu": "STM32F407VG", "elf": "node.elf"},
+    },
+    "media": [
+        {"type": "uart", "connect": ["dut.usart6", "dut.gpspeer"]},
+        {"type": "can",  "connect": ["dut.fdcan1", "node.can1"]},
+    ],
+}
+run = simantic.run_scenario(scenario, timeout=12, args=["--trace-symbol", "can_send"])
+
+assert "[dut] GPS fix: 3" in run.output          # "[machine] "-prefixed UART lines
+sends = [l for l in run.stdout.splitlines() if l.startswith("[node]") and "can_send" in l]
 ```
 
-The Rust engine is a small extension module, and is
-considerably faster. Anything it cannot do yet will raise a `simantic.NotSupported` and names the gap
-instead of quietly doing nothing. What each engine covers is listed in
-[the engine table](https://github.com/simantic-dev/pippy/blob/main/docs/session-api.md#what-each-engine-supports).
+The scenario dict is the same shape as `sim run --scenario`'s YAML. Records
+carry virtual-time stamps, so a rate is a subtraction and an ordering is a
+comparison. Changing what a peer does (a NACK for 50 ms, a stale frame, a node
+that stops answering at t = 5 s) is an edit to its script. The `sim` guide
+covers every output and the peer API: https://simantic.com/docs
+
+## Testing with pytest
+
+Installing the package turns each `test.yaml` manifest into its own pytest item,
+so you get `-k` filtering, `--junitxml` and xdist. A manifest is a scenario plus
+what must and must not appear:
+
+```yaml
+machines:
+  dut:
+    mcu: STM32H753ZI
+    elf: fc.elf
+    parts:
+      - { name: gpspeer, type: uart-device, baud: 230400, script: gps.py }
+media:
+  - { type: uart, connect: [dut.usart6, dut.gpspeer] }
+timeout: 12
+expect:               ["GPS fix: 3"]
+expect_absent:        ["RESULT: FAIL"]
+```
+
+```bash
+pytest path/to/fixtures -k gps
+```
+
+Each item runs `sim run --scenario ... --record DIR` and checks the bundle. When
+a test fails, its UART transcript is attached to the report. Single-machine
+manifests (`mcu:` at the top level) are the one-machine case. Models resolve
+through your account; no checkout of ours is needed.
+
+A run has a wall-clock budget: 30 s of host time by default, or whatever `wall:`
+says. Going over it fails the test with the virtual time reached. Slow
+simulation is a firmware busy-wait or a model gap, and the report says which.
+
+For a scenario with Python assertions in the middle, call `run_scenario` from an
+ordinary test, as above; see [docs/writing-tests.md](docs/writing-tests.md).
+
+## Stepping one machine: `Sim`
+
+`Sim` runs the in-process pyrite engine on a single machine, so you can step
+virtual time, inject, and read state between steps. It is a debugging and
+stepping layer, not the way to run scenarios or suites.
+
+```python
+from simantic import Sim
+
+with Sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2") as sim:
+    sim.expect("ready")
+    sim.inject_gpio("gpioc", 13, True)      # press the user button
+    sim.expect("button pressed")
+    assert sim.read_u32("press_count") == 1
+```
+
+Time moves only when you ask. See [docs/session-api.md](docs/session-api.md).
+
+## When to use what
+
+* **The `sim` CLI directly:** one-off runs, `--real-time`, `--uart-tcp` bridges,
+  `--record` bundles, interactive poking.
+* **`run_scenario` and pytest `test.yaml`:** anything with several machines,
+  scripted peers or media, and every suite that runs in CI.
+* **`Sim`:** one machine, when you need to pause part-way, inject input, or read
+  memory and RTOS state between steps.
 
 ## ESP32 images
 
@@ -105,128 +171,6 @@ the P4 ROM from the [esp-rom-elfs](https://github.com/espressif/esp-rom-elfs)
 release ESP-IDF installs. Offline, or with your own copy, pass `--rom`.
 `simantic esp-rom --chip esp32c3` downloads it ahead of time and prints where it
 went.
-
-## Testing with pytest
-
-Take the `sim` fixture and write ordinary tests:
-
-```python
-def test_timer_irq_fires(sim):
-    s = sim(elf="fw.elf", mcu="STM32F401RE", uart="usart2")
-    s.expect("fired=1", timeout=8)
-    assert s.read_u32("fired") == 1
-```
-
-The engine starts once per worker rather than once per test, and every machine
-is closed for you. When a test fails, its UART transcript is attached to the
-report, because that is usually the evidence you want.
-
-### Test what went over the wire
-
-Firmware that prints "sensor OK" is reporting its own bookkeeping. The bus
-tells you what happened. Put a scripted device on the other end of each bus
-(a `parts` entry per device, each backed by a few dozen lines of Python), wire
-the media in a scenario, and assert on `frames()`:
-
-```python
-SCENARIO = {
-    "machines": {"dut": {
-        "mcu": "STM32H753IITX", "elf": "fc.elf",
-        "parts": [
-            {"name": "imu0",    "type": "spi-device",  "bus": "spi1", "cs": "PC4", "script": "icm42688.py"},
-            {"name": "baro",    "type": "i2c-device",  "bus": "i2c2", "address": 0x63, "script": "icp20100.py"},
-            {"name": "gpspeer", "type": "uart-device", "baud": 230400, "script": "gps.py"},
-            {"name": "canpeer", "type": "can-node",    "script": "dronecan.py"},
-        ],
-    }},
-    "media": [
-        {"type": "uart", "connect": ["dut.usart6", "dut.gpspeer"]},
-        {"type": "can",  "connect": ["dut.fdcan1", "dut.canpeer"]},
-    ],
-}
-
-def test_imu_configured_then_streams(sim):
-    s = sim(scenario=SCENARIO, machine="dut", uart="usart1")
-    s.run_for(3.0)                                            # virtual seconds
-    imu = [f for f in s.frames() if f["label"] == "imu0"]     # one dict per chip-select window
-    cfg = next(f for f in imu if f["data"][0] == 0x4F)        # GYRO_CONFIG0 write
-    assert cfg["data"][1] & 0x0F == 0x06                      # ODR the driver programmed
-    assert cfg["miso"][0] == 0x00                             # what the slave answered
-    bursts = [f for f in imu if f["t"] > cfg["t"] and len(f["data"]) > 16]
-    assert len(bursts) > 100                                  # FIFO reads after configuration
-```
-
-Every record carries its virtual-time stamp, so a rate is a subtraction between
-consecutive frames and an ordering is a comparison. The scenario dict is the
-same shape as `sim --scenario`'s YAML, and because the test owns it, the
-negative control is the same test with a peer removed from `media`. Changing
-what a device does (a NACK for 50 ms, a stale frame, a node that stops
-answering at t = 5 s) is an edit to the peer script, on the virtual clock. The
-`sim` guide covers every output and the peer API:
-https://simantic.com/docs
-
-`--sim-backend=renode|rust|both` chooses the engine. With `both`, each test runs
-on each and the engine name appears in the test id. Anything an engine cannot do
-is reported as a skip with the reason, so one suite can target both and stay
-honest about what each covers.
-
-`test.yaml` manifests follow the same option. On `rust` a manifest, including a
-multi machine one with `media:`, runs to its timeout in one call and its UART
-output is checked afterwards; `expect_frames` checks are skipped there for now.
-`simantic.run_firmware(..., backend="rust")` does the same for a single ELF.
-
-One tip worth real time: on the Renode engine, every hand off between Python and
-the simulation costs a few hundred microseconds. Reading is free, pausing and
-resuming is not. Prefer `expect()`, which crosses once, over a loop that polls
-every millisecond. On the Rust engine, polling is essentially free.
-
-If you keep `test.yaml` fixture manifests, installing the package also turns
-each one into its own pytest item, so you get `-k` filtering, `--junitxml`, and
-xdist for free. A manifest is the fire-and-forget form of a test: name the
-machine(s) with their `parts`, the `media` that wire UART and CAN peers to
-the firmware's controllers, how long to run, and what must and must not
-appear:
-
-```yaml
-machines:
-  dut:
-    mcu: STM32H753ZI
-    elf: fc.elf
-    parts:
-      - { name: gpspeer, type: uart-device, baud: 230400, script: gps.py }
-media:
-  - { type: uart, connect: [dut.usart6, dut.gpspeer] }
-timeout: 12
-expect:               ["GPS fix: 3"]
-expect_absent:        ["RESULT: FAIL"]
-expect_frames:        ["SPI Rx cs=0 len=2 mosi=4F 06"]   # same line shape as `sim --frames`
-expect_frames_absent: ["CAN Dropped"]
-```
-
-Single-machine manifests (`mcu:` at the top level) are the one-machine case.
-Models resolve through your account; no checkout of ours is needed. A model can
-require a minimum engine version; if yours is older, the failure names the
-version and the fix (use a newer engine build).
-
-Three more keys cover fixtures that need files or peers on the host side:
-`sparse_files` creates blank files of a given size before the run (a blank SD
-card, say), `networkServices` adds scripted network peers, and `{TEST_DIR}` and
-`{WORK_DIR}` in a board file expand to the manifest's directory and a per-test
-scratch directory. A manifest whose `sim_args` asks for a `sim`
-command-line flag with no equivalent here is skipped, with the flag named.
-
-A run also has a wall-clock budget: 30 s of host time by default, 100 s with
-`wireless: true`, or whatever `wall:` says. Going over it fails the test with
-the virtual time reached. Slow simulation is a firmware busy-wait or a model
-gap, and the report tells you which to go find rather than waiting it out.
-
-For a single run with no assertions in the middle, there is `run_firmware(...)`:
-
-```python
-run = simantic.run_firmware("build/zephyr.elf", mcu="STM32F401RE",
-                            expect=["RESULT: PASS"])
-assert run.passed, run.failure_report()
-```
 
 ## Telemetry
 

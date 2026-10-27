@@ -1,6 +1,6 @@
 """Python control of the Simantic simulators.
 
-The firmware engine, hosted in your process.
+The `sim` binary runs batches; the engine can also be hosted in your process.
 
     import simantic
 
@@ -9,8 +9,8 @@ The firmware engine, hosted in your process.
     run = simantic.run_firmware("fw.elf", mcu="STM32F401RE",
                                 expect=["RESULT: PASS"])          # one-shot
 
-The engine is fetched on first use. The `sim` CLI is optional; point
-`$SIMANTIC_SIM` at one, or put it on PATH.
+`run_firmware` and `run_scenario` need the `sim` binary: point `$SIMANTIC_SIM`
+at one, or put it on PATH. `Sim` fetches its engine on first use.
 
 Installing this package also registers a pytest plugin that turns `test.yaml`
 fixture manifests into individually addressable pytest items.
@@ -22,18 +22,17 @@ from .fixtures import (
     UnsupportedManifest,
     load_manifest,
 )
-from .mcu import ServerNotConfigured, SimError, SimRun, sim_binary
+from .mcu import ScenarioRun, SimError, SimRun, run_scenario, sim_binary
 from .mcu import run as run_firmware
-from .engine import EngineNotFound, engine_dir, rust_engine_dir
-from .session import BACKENDS, ExpectTimeout, Match, Sim
-from ._rust import NotSupported, ScenarioRun, run_scenario
+from .engine import EngineNotFound, rust_engine_dir
+from .session import ExpectTimeout, Match, Sim
+from ._rust import NotSupported
 
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 
 __all__ = [
     # firmware
     "Manifest",
-    "ServerNotConfigured",
     "SimError",
     "SimRun",
     "UnsupportedManifest",
@@ -48,8 +47,6 @@ __all__ = [
     "ExpectTimeout",
     "EngineNotFound",
     "NotSupported",
-    "BACKENDS",
-    "engine_dir",
     "rust_engine_dir",
     # shared
     "BinaryNotFound",

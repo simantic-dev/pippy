@@ -7,10 +7,10 @@ import os
 import pytest
 
 from simantic import ExpectTimeout, Sim
-from simantic.engine import EngineNotFound, engine_dir
+from simantic.engine import EngineNotFound, rust_engine_dir
 
 try:
-    engine_dir()
+    rust_engine_dir(fetch=False)
     HAVE_ENGINE = True
 except EngineNotFound:
     HAVE_ENGINE = False
@@ -58,7 +58,7 @@ def test_expect_timeout_is_assertion():
 
 @needs_engine
 def test_symbols_elf_single_machine():
-    """symbols_elf= reaches SessionMachine.SymbolsElfPath
+    """symbols_elf= reaches the engine
     without upsetting the run. No stripped-image fixture is wired up here, so
     the companion ELF is the image itself — a smoke test of the plumbing
     (loading the same ELF's symbols twice isn't a real symbol-resolution
@@ -78,27 +78,3 @@ def test_symbols_elf_path_in_scenario():
     with Sim(scenario=scenario, uart=UART) as sim:
         m = sim.expect(r"RESULT: (PASS|FAIL)", timeout=120)
         assert "PASS" in m
-
-
-def test_start_error_names_the_fix_for_a_stale_engine():
-    from simantic.session import _start_error
-    stale = _start_error(Exception(
-        "Error E25: Could not find suitable constructor for type 'STM32F4_RCC'.\nConstructor selection report: ..."))
-    assert "use a newer build" in stale
-    assert "STM32F4_RCC" in stale and "selection report" not in stale
-    assert _start_error(Exception("no such file")) == "could not start the simulation: no such file"
-
-
-def test_needs_newer_engine_reads_the_models_minimum(tmp_path, monkeypatch):
-    from simantic.session import _needs_newer_engine
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / ".sim_cache").mkdir()
-    (tmp_path / ".sim_cache" / "stm32h753zi.json").write_text('{"min_sim_version": "0.6.3"}')
-    (tmp_path / ".sim_cache" / "stm32f401re.json").write_text('{"min_sim_version": null}')
-    old, new = tmp_path / "0.6.1", tmp_path / "0.6.3"
-    msg = _needs_newer_engine(["STM32F401RE", "STM32H753ZI"], old)
-    assert "STM32H753ZI needs engine 0.6.3 or newer; 0.6.1 is installed" in msg
-    assert "use a newer build" in msg
-    assert _needs_newer_engine(["STM32H753ZI"], new) is None
-    assert _needs_newer_engine(["NOT-CACHED"], old) is None
-    assert _needs_newer_engine(["STM32H753ZI"], tmp_path / "publish") is None   # dev engine: no version

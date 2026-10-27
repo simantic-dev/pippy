@@ -1,8 +1,7 @@
 """Symbol addresses from a 32-bit little-endian ELF, with the standard library.
 
-The Renode backend resolves symbols inside the engine. The Rust engine does
-not carry a symbol table, so `Sim.symbol()` on that backend reads `.symtab`
-here — the same answer, from the same file.
+The in-process engine does not carry a symbol table, so `Sim.symbol()` reads
+`.symtab` here.
 """
 
 from __future__ import annotations

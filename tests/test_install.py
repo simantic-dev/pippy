@@ -27,6 +27,7 @@ MANIFEST = {
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("SIMANTIC_HOME", raising=False)
+    monkeypatch.delenv("SIMANTIC_SIM", raising=False)
     # Fetching requires an account, so the common case here is authenticated.
     auth.save("smtc_" + "a" * 32, "dev@example.com")
     monkeypatch.setattr(install, "_release_url", lambda path: "https://releases.invalid/" + path)
@@ -534,15 +535,6 @@ def test_version_order_ignores_junk_and_prereleases():
     assert max(["zzz", "0.6.2"], key=install._version_key) == "0.6.2"
 
 
-def test_installed_engine_picks_the_newest_version(home, monkeypatch):
-    for v in ("0.9.0", "0.10.0", "0.9.1", "zzz"):
-        d = install.engine_root() / v
-        d.mkdir(parents=True)
-        (d / "Simantic.Core.dll").write_bytes(b"")
-        (d / "sim.runtimeconfig.json").write_bytes(b"{}")
-    assert install.installed_engine().name == "0.10.0"
-
-
 # -- the Rust engine ----------------------------------------------------------
 
 RUST_MANIFEST = {
@@ -605,16 +597,6 @@ def test_a_directory_without_the_module_is_not(tmp_path):
     (tmp_path / "simantic_rust-0.3.0.dist-info").mkdir()
     (tmp_path / "simantic_rust").mkdir()          # no __init__.py: not importable
     assert not install.is_rust_engine(tmp_path)
-
-
-def test_engine_dir_does_not_fetch_the_retired_csharp_engine(home, monkeypatch):
-    from simantic import engine
-
-    monkeypatch.delenv("SIMANTIC_SIM", raising=False)
-    monkeypatch.delenv("SIMANTIC_ENGINE_DIR", raising=False)
-    monkeypatch.setenv("PATH", "")
-    with pytest.raises(engine.EngineNotFound, match="Simantic.Core.dll not found"):
-        engine.engine_dir()
 
 
 def test_pyrite_manifest_resolves_sim_and_rust_engine(home, monkeypatch):

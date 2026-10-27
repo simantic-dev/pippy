@@ -1,13 +1,8 @@
-"""Loading the simulation engine into this process.
+"""Loading the in-process engine: the `simantic_rust` extension module.
 
-`Simantic.Core` is a .NET library; `sim` is one face of it and this package is
-another. `simantic install` (or `$SIMANTIC_SIM`) gives us the directory that
-holds `sim`, `Simantic.Core.dll` and the runtime config, which is everything
-needed to host the engine here via pythonnet. Nothing is spawned: the Python
-objects *are* the session.
-
-One emulation per process — the engine keeps process-global state — so
-parallel runs are parallel processes (`ProcessPoolExecutor`).
+`simantic install engine-rust` (or `$SIMANTIC_RUST_ENGINE_DIR`) gives us the
+directory that holds it. Nothing is spawned: the Python objects *are* the
+session.
 """
 
 from __future__ import annotations
@@ -18,132 +13,12 @@ from functools import cache
 from pathlib import Path
 
 from . import install
-from ._locate import BinaryNotFound
-from .mcu import sim_binary
 
-ENV_DIR = "SIMANTIC_ENGINE_DIR"
 RUST_ENV_DIR = "SIMANTIC_RUST_ENGINE_DIR"
-
-#: Oldest engine this package can drive. The Session API it calls landed in
-#: sim 0.5.4; an older engine fails with a missing-member error deep inside
-#: pythonnet, so it is checked here where the message can say what to do.
-MIN_ENGINE = (0, 5, 4)
-
-
-class EngineTooOld(RuntimeError):
-    """The installed engine predates the API this package calls."""
-
-
-def _version_of(d: Path) -> tuple | None:
-    """The engine's version, from the directory name a managed install uses."""
-    parts = []
-    for piece in d.name.split("-")[0].split("."):
-        if not piece.isdigit():
-            return None
-        parts.append(int(piece))
-    return tuple(parts) if len(parts) >= 3 else None
-
-
-def check_engine_version(d: Path) -> None:
-    """Refuse an engine older than MIN_ENGINE; unknown versions pass.
-
-    A development publish directory has no version in its name — that path is
-    the developer's own problem, and blocking it would break local work.
-    """
-    found = _version_of(d)
-    if found is not None and found < MIN_ENGINE:
-        want = ".".join(str(p) for p in MIN_ENGINE)
-        have = ".".join(str(p) for p in found)
-        raise EngineTooOld(
-            f"engine {have} at {d} is older than {want}, which this package needs. "
-            f"Use a newer engine build."
-        )
 
 
 class EngineNotFound(RuntimeError):
-    """The engine assemblies could not be located or loaded."""
-
-
-def _is_engine(d: Path) -> bool:
-    return (d / "Simantic.Core.dll").exists() and (d / "sim.runtimeconfig.json").exists()
-
-
-def engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = True) -> Path:
-    """The directory holding Simantic.Core.dll and sim.runtimeconfig.json.
-
-    Order: an explicit path, $SIMANTIC_ENGINE_DIR, a development `sim` whose
-    publish directory is beside it ($SIMANTIC_SIM), then the managed install
-    under ~/.simantic/engine. The C# engine is no longer published or
-    fetched; the Rust engine is the installable one.
-    """
-    candidates = []
-    if explicit is not None:
-        candidates.append(Path(explicit))
-    if os.environ.get(ENV_DIR):
-        candidates.append(Path(os.environ[ENV_DIR]))
-    try:
-        candidates.append(sim_binary().resolve().parent)
-    except BinaryNotFound:
-        pass
-    for d in candidates:
-        if _is_engine(d):
-            return d
-    managed = install.installed_engine()
-    if managed is not None:
-        return managed
-    raise EngineNotFound(
-        f"Simantic.Core.dll not found. Set ${ENV_DIR}."
-    )
-
-
-def _resolve_plugin_assemblies_from(d: Path) -> None:
-    """Let the runtime find Renode plugin assemblies (e.g. Microsoft.Dynamic,
-    IronPython) that aren't in sim.deps.json.
-
-    Renode loads some assemblies dynamically (a platform's PythonPeripheral,
-    for one) rather than through Simantic.Core's own dependency graph, so
-    they never make it into the CLI's deps.json. The `sim` executable finds
-    them anyway because a framework-dependent apphost falls back to probing
-    its own directory; pythonnet's manual coreclr host does not get that
-    fallback, so a plain AssemblyLoadContext.Resolving hook does it here.
-    """
-    from System import AppDomain  # type: ignore[import-not-found]
-    from System.IO import File as NetFile, Path as NetPath  # type: ignore[import-not-found]
-    from System.Reflection import Assembly  # type: ignore[import-not-found]
-
-    def handler(_sender, args):
-        name = str(args.Name).split(",")[0]
-        candidate = NetPath.Combine(str(d), name + ".dll")
-        return Assembly.LoadFrom(candidate) if NetFile.Exists(candidate) else None
-
-    AppDomain.CurrentDomain.AssemblyResolve += handler
-
-
-@cache
-def load(explicit: str | os.PathLike[str] | None = None):
-    """Host the .NET runtime and import Simantic.Core. Returns the Session namespace."""
-    d = engine_dir(explicit)
-    check_engine_version(d)
-    try:
-        from pythonnet import load as load_runtime
-    except ImportError as exc:  # pragma: no cover - dependency declared in pyproject
-        raise EngineNotFound("pythonnet is required to host the engine: pip install pythonnet") from exc
-    # A managed engine carries its own runtime in dotnet/; a development
-    # publish directory relies on the machine's ($DOTNET_ROOT / default).
-    bundled = d / "dotnet"
-    if (bundled / "host").is_dir():
-        load_runtime("coreclr", runtime_config=str(d / "sim.runtimeconfig.json"), dotnet_root=str(bundled))
-    else:
-        load_runtime("coreclr", runtime_config=str(d / "sim.runtimeconfig.json"))
-    import clr  # noqa: F401  (provided by pythonnet after load)
-
-    if str(d) not in sys.path:
-        sys.path.append(str(d))
-    _resolve_plugin_assemblies_from(d)
-    clr.AddReference("Simantic.Core")
-    import Simantic.Core.Emulation.Session as session_ns  # type: ignore[import-not-found]
-
-    return session_ns
+    """The engine could not be located or loaded."""
 
 
 def rust_engine_dir(explicit: str | os.PathLike[str] | None = None, *, fetch: bool = True) -> Path:

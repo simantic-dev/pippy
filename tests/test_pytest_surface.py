@@ -1,8 +1,6 @@
 """The pytest surface, exercised against a real engine and real firmware.
 
-These are the tests a user would write. They run on whichever engine
---sim-backend names (`both` runs each twice), so they double as the evidence
-that one suite can target both.
+These are the tests a user would write.
 """
 import os
 import pytest
@@ -46,15 +44,9 @@ def test_memory_and_time_advance(sim):
     assert s.time > first
 
 
-def test_backend_is_the_one_requested(sim, sim_backend):
-    s = f401(sim, "mips-profile")
-    assert s.backend == sim_backend
-
-
 def test_unsupported_capability_skips_not_fails(sim):
-    """A multi-machine scenario is Renode-only; on rust this must skip."""
+    """The in-process engine runs one machine; a two-machine scenario must skip."""
     s = sim(scenario={"machines": {
         "a": {"elf": f"{FIX}/mips-profile/nucleo_f401re.elf", "mcu": MCU},
         "b": {"elf": f"{FIX}/mips-profile/nucleo_f401re.elf", "mcu": MCU},
     }}, uart=UART)
-    assert len(s.machines) == 2
