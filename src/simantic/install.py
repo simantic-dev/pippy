@@ -484,7 +484,8 @@ def _unpack_zip(payload: bytes, target: Path) -> None:
             for name in archive.namelist():
                 # Refuse anything that would land outside the target.
                 dest = (incoming / name).resolve()
-                if not str(dest).startswith(str(incoming.resolve())):
+                # A path check, not a string prefix: `.x.incoming-evil` shares the prefix.
+                if not dest.is_relative_to(incoming.resolve()):
                     raise InstallError(f"archive has an unsafe path: {name}")
             archive.extractall(incoming)
         if target.exists():
