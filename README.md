@@ -14,9 +14,7 @@ Nothing to plug in, nothing to flash. Simantic boots your real ELF on a
 simulated microcontroller and hands you the whole machine from Python. Watch it
 print, press a button, read a variable straight out of RAM.
 
-```bash
-pip install simantic
-```
+The package is not distributed on PyPI; install `sim` from the CLI setup page (https://simantic.com/install).
 
 ```python
 from simantic import Sim
@@ -49,9 +47,8 @@ and no port to talk to.
 
 ## Setup
 
-`pip install` is the whole setup. The first `Sim(...)` downloads the engine it
-needs into `~/.simantic/` and checks it against the published checksum. The
-wheel on PyPI holds only Python code; the simulators are never inside it.
+The first `Sim(...)` downloads the engine it needs into `~/.simantic/` and checks it
+against the published checksum.
 
 Sign in once if you want to name MCUs by part number:
 
