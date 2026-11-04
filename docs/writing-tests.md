@@ -81,7 +81,8 @@ where each Python/engine hand-off costs a few hundred microseconds.
 ## Running it
 
 ```
-pip install simantic pytest
+# install sim with the script on the CLI setup page: curl -fsSL https://simantic.com/install | sh
+pip install pytest
 FIRMWARE=/path/to/firmware.elf pytest tests   # from a simantic-dev/examples checkout
 ```
 
