@@ -628,3 +628,11 @@ def test_pyrite_manifest_resolves_sim_and_rust_engine(home, monkeypatch):
     assert install.resolve("sim").path == "pyrite/1.2.3/sim-osx-arm64"
     monkeypatch.setattr(install, "download", lambda a, timeout=300: engine_zip({"simantic_rust.abi3.so": b"x"}))
     assert install.install_rust_engine() == install.rust_engine_root() / "1.2.3"
+
+
+def test_unpack_zip_refuses_a_sibling_sharing_the_prefix(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("../.engine.incoming-evil/f", b"x")
+    with pytest.raises(install.InstallError, match="unsafe path"):
+        install._unpack_zip(buf.getvalue(), tmp_path / "engine")
