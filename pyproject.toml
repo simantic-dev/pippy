@@ -25,7 +25,7 @@ classifiers = [
 dependencies = ["pyyaml>=6", "pythonnet>=3.0.5"]
 
 [project.urls]
-Homepage = "https://simantic.dev"
+Homepage = "https://simantic.com"
 Source = "https://github.com/simantic-dev/pippy"
 Issues = "https://github.com/simantic-dev/pippy/issues"
 
